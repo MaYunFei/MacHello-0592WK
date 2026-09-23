@@ -52,6 +52,15 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         }
     }
 
+    /// 诊断测试独占标记
+    public var isDiagnosticRunning: Bool = false {
+        didSet {
+            if isDiagnosticRunning {
+                stopAuth()
+            }
+        }
+    }
+
     private let keychain = KeychainHelper.shared
     private let accessibility = AccessibilityHelper.shared
     private let audio = AudioFeedbackHelper.shared

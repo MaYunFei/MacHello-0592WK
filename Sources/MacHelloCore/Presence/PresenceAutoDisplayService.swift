@@ -91,6 +91,15 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
 
     public var onStateUpdated: ((_ isEnabled: Bool, _ isPresent: Bool, _ isOwner: Bool, _ isDisplayAsleep: Bool) -> Void)?
 
+    /// 诊断测试独占标记：硬件自检运行时全权让出摄像头
+    public var isDiagnosticRunning: Bool = false {
+        didSet {
+            if isDiagnosticRunning {
+                captureService.stop()
+            }
+        }
+    }
+
     private override init() {
         super.init()
         presenceDetector.delegate = self
@@ -149,7 +158,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     }
 
     private func checkAbsenceStatus() {
-        guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
+        guard isEnabled, !FaceEnrollmentService.shared.isEnrolling, !isDiagnosticRunning else { return }
 
         // 情况一：屏幕当前处于点亮工作状态
         if !displayManager.isDisplayAsleep {
@@ -268,7 +277,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     // MARK: - CameraCaptureDelegate
 
     public func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
-        guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
+        guard isEnabled, !FaceEnrollmentService.shared.isEnrolling, !isDiagnosticRunning else { return }
 
         let now = Date()
         guard now.timeIntervalSince(lastProcessedFrameTime) >= frameProcessingInterval else { return }

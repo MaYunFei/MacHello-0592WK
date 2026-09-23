@@ -30,19 +30,72 @@ public enum TestState: Equatable {
     }
 }
 
+final class DiagnosticFileManager {
+    static let shared = DiagnosticFileManager()
+
+    var diagnosticsDirectory: URL {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let dir = home.appendingPathComponent(".machello/diagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    var rgbImagePath: URL {
+        return diagnosticsDirectory.appendingPathComponent("rgb.jpg")
+    }
+
+    var irImagePath: URL {
+        return diagnosticsDirectory.appendingPathComponent("ir.jpg")
+    }
+
+    var logFilePath: URL {
+        return diagnosticsDirectory.appendingPathComponent("diagnostic.log")
+    }
+
+    func log(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        let line = "[\(formatter.string(from: Date()))] \(message)\n"
+        print("[Diagnostic] \(message)")
+
+        let path = logFilePath.path
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path) {
+                if let fileHandle = FileHandle(forWritingAtPath: path) {
+                    fileHandle.seekToEndOfFile()
+                    fileHandle.write(data)
+                    fileHandle.closeFile()
+                }
+            } else {
+                try? data.write(to: logFilePath)
+            }
+        }
+    }
+
+    func saveImage(_ data: Data, isIR: Bool) {
+        let target = isIR ? irImagePath : rgbImagePath
+        try? data.write(to: target)
+        log("测试实拍图已归档: \(target.path) (\(data.count) 字节)")
+    }
+
+    func openFolder() {
+        NSWorkspace.shared.open(diagnosticsDirectory)
+    }
+}
+
 final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     var onFrame: ((NSImage) -> Void)?
     var isGrayscale: Bool = false
-    var savePath: String?
+    var isIRTarget: Bool = false
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var lastUpdate: TimeInterval = 0
-    private var frameIndex = 0
+    public var frameCount = 0
     private var bestJPEGData: Data?
 
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
-        frameIndex += 1
-        // 红外模式下跳过最初 6 帧，避免曝光爬升前期的低增益暗帧
-        if isGrayscale && frameIndex < 7 { return }
+        frameCount += 1
+        // 红外模式下跳过最初 6 帧，避免曝光增益爬升初期的暗帧
+        if isGrayscale && frameCount < 7 { return }
 
         let now = CACurrentMediaTime()
         // 限制在 ~15fps (约 65ms 一帧)，既丝滑生动，又绝不卡顿 UI
@@ -76,10 +129,8 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     }
 
     func saveSnapshot() {
-        guard let path = savePath, let data = bestJPEGData else { return }
-        let url = URL(fileURLWithPath: path)
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url)
+        guard let data = bestJPEGData else { return }
+        DiagnosticFileManager.shared.saveImage(data, isIR: isIRTarget)
     }
 }
 
@@ -127,19 +178,32 @@ public final class DiagnosticViewModel: ObservableObject {
         irImage = nil
         statusMessage = "正在连接可见光镜头并拉取实时画面..."
 
+        // 诊断测试独占摄像头，避免后台自动睡眠/人脸检测冲突抢占
+        PresenceAutoDisplayService.shared.isDiagnosticRunning = true
+        AutoAuthManager.shared.isDiagnosticRunning = true
+        DiagnosticFileManager.shared.log("=== 开始硬件全面链路检测向导 ===")
+        DiagnosticFileManager.shared.log("已暂停后台感知服务与全场景免密监听，独占摄像头控制权")
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let cameraService = CameraCaptureService.shared
             let irController = IRController.shared
+
+            defer {
+                PresenceAutoDisplayService.shared.isDiagnosticRunning = false
+                AutoAuthManager.shared.isDiagnosticRunning = false
+                DiagnosticFileManager.shared.log("已恢复后台感知服务与全场景免密监听")
+            }
 
             // 先确保摄像头停止，处于干净准备状态
             cameraService.stop()
             Thread.sleep(forTimeInterval: 0.25)
 
             // Step 1: 测试可见光 (RGB 720P) 实时画面
+            DiagnosticFileManager.shared.log("Step 1: 正在测试可见光 (RGB 720P) 镜头...")
             let rgbHelper = DiagnosticCaptureHelper()
             rgbHelper.isGrayscale = false
-            rgbHelper.savePath = "Tests/Snapshots/diagnostic_rgb.jpg"
+            rgbHelper.isIRTarget = false
             rgbHelper.onFrame = { [weak self] img in
                 self?.rgbImage = img
             }
@@ -152,6 +216,7 @@ public final class DiagnosticViewModel: ObservableObject {
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的黑帧污染画面
                 cameraService.stop()
                 rgbHelper.saveSnapshot()
+                DiagnosticFileManager.shared.log("Step 1: RGB 720P 测试完成，捕获 \(rgbHelper.frameCount) 帧")
 
                 DispatchQueue.main.async {
                     self.test1State = .passed
@@ -159,6 +224,7 @@ public final class DiagnosticViewModel: ObservableObject {
                     self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
                 }
             } catch {
+                DiagnosticFileManager.shared.log("Step 1: RGB 测试失败: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.test1State = .failed(error.localizedDescription)
                     self.isTesting = false
@@ -168,14 +234,17 @@ public final class DiagnosticViewModel: ObservableObject {
             }
 
             // Step 2: 验证 UVC 扩展单元
+            DiagnosticFileManager.shared.log("Step 2: 正在验证 UVC 扩展单元 (0bda:5767)...")
             Thread.sleep(forTimeInterval: 0.3)
             guard irController.isConnected else {
+                DiagnosticFileManager.shared.log("Step 2: 未找到 USB 0bda:5767 接口")
                 DispatchQueue.main.async {
                     self.test2State = .failed("未找到 USB 0bda:5767 接口")
                     self.isTesting = false
                 }
                 return
             }
+            DiagnosticFileManager.shared.log("Step 2: UVC 扩展单元接口就绪")
             DispatchQueue.main.async {
                 self.test2State = .passed
                 self.test3State = .running
@@ -183,15 +252,18 @@ public final class DiagnosticViewModel: ObservableObject {
             }
 
             // Step 3: 触发 IR 模式
+            DiagnosticFileManager.shared.log("Step 3: 正在下发 UVC 寄存器切换至 IR 模式 (0x00)...")
             Thread.sleep(forTimeInterval: 0.3)
             let irSuccess = irController.setMode(.ir)
             guard irSuccess else {
+                DiagnosticFileManager.shared.log("Step 3: UVC 寄存器写入失败")
                 DispatchQueue.main.async {
                     self.test3State = .failed("UVC 寄存器写入失败")
                     self.isTesting = false
                 }
                 return
             }
+            DiagnosticFileManager.shared.log("Step 3: IR 模式与 850nm 发射管打亮成功")
             DispatchQueue.main.async {
                 self.test3State = .passed
                 self.test4State = .running
@@ -199,10 +271,11 @@ public final class DiagnosticViewModel: ObservableObject {
             }
 
             // Step 4: 捕获 IR 视频流 (切换为红外灰度采集)
+            DiagnosticFileManager.shared.log("Step 4: 正在启动 IR 640x480 YUY2 视频采集...")
             Thread.sleep(forTimeInterval: 0.4)
             let irHelper = DiagnosticCaptureHelper()
             irHelper.isGrayscale = true
-            irHelper.savePath = "Tests/Snapshots/diagnostic_ir.jpg"
+            irHelper.isIRTarget = true
             irHelper.onFrame = { [weak self] img in
                 self?.irImage = img
             }
@@ -216,6 +289,8 @@ public final class DiagnosticViewModel: ObservableObject {
                 cameraService.stop()
                 irHelper.saveSnapshot()
                 irController.resetToRGB()
+                DiagnosticFileManager.shared.log("Step 4: IR 测试完成，捕获 \(irHelper.frameCount) 帧")
+                DiagnosticFileManager.shared.log("=== 硬件自检全部通过 ===")
 
                 DispatchQueue.main.async {
                     self.test4State = .passed
@@ -225,6 +300,7 @@ public final class DiagnosticViewModel: ObservableObject {
                 }
             } catch {
                 irController.resetToRGB()
+                DiagnosticFileManager.shared.log("Step 4: IR 捕获失败: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.test4State = .failed(error.localizedDescription)
                     self.isTesting = false
@@ -410,6 +486,11 @@ public struct HardwareDiagnosticView: View {
                 }
                 .disabled(vm.isTesting || !vm.isConnected)
                 .keyboardShortcut(.defaultAction)
+
+                Button("📂 打开日志与截图") {
+                    DiagnosticFileManager.shared.openFolder()
+                }
+                .font(.subheadline)
 
                 Spacer()
 
