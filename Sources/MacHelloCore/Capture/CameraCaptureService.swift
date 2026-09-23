@@ -96,6 +96,14 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
             }) {
                 device.activeFormat = irFormat
             }
+        } else {
+            // RGB 模式必须恢复为 1280x720 格式，否则会被遗留在 IR 格式上导致黑屏
+            if let rgbFormat = device.formats.first(where: {
+                let dims = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+                return dims.width == 1280 && dims.height == 720
+            }) {
+                device.activeFormat = rgbFormat
+            }
         }
         device.unlockForConfiguration()
 

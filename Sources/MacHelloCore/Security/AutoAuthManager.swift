@@ -267,7 +267,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             if reason == .lockScreen {
                 print("[AutoAuth] ✓ 锁屏机主核验成功，模拟唤醒并键入密码解锁进桌面...")
                 self.accessibility.wakeLoginPrompt()
-                usleep(250000) // 250ms 等待输入框就绪
+                usleep(300000) // 300ms 等待锁屏 Esc 响应并聚焦密码输入框
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
             } else {
                 print("[AutoAuth] ✓ 管理员弹窗机主核验成功，自动键入密码提权...")

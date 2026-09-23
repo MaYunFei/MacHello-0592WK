@@ -54,24 +54,16 @@ public final class AccessibilityHelper {
         if pressEnter {
             usleep(35000) // 35ms 确保输入框内容已完全落地
 
-            // 1. 发送标准主键盘 Return 确认键 (Virtual Key: 36 / 0x24)
+            // 发送标准主键盘 Return 确认键 (Virtual Key: 36 / 0x24)
             let retDown = CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: true)
             retDown?.post(tap: .cghidEventTap)
             usleep(15000)
             let retUp = CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: false)
             retUp?.post(tap: .cghidEventTap)
-
-            usleep(15000)
-            // 2. 兼容性发送数字小键盘 Enter 键 (Virtual Key: 52 / 0x34)
-            let enterDown = CGEvent(keyboardEventSource: src, virtualKey: 52, keyDown: true)
-            enterDown?.post(tap: .cghidEventTap)
-            usleep(15000)
-            let enterUp = CGEvent(keyboardEventSource: src, virtualKey: 52, keyDown: false)
-            enterUp?.post(tap: .cghidEventTap)
         }
     }
 
-    /// 模拟唤醒键（如 Esc 或空格），唤出可能隐藏的锁屏密码输入框
+    /// 模拟唤醒键（Esc），唤出可能隐藏的锁屏密码输入框，同时清空可能遗留的输入
     public func wakeLoginPrompt() {
         let src = CGEventSource(stateID: .hidSystemState)
         // Esc 键按下与抬起 (0x35)
@@ -80,13 +72,5 @@ public final class AccessibilityHelper {
         usleep(15000)
         let escUp = CGEvent(keyboardEventSource: src, virtualKey: 0x35, keyDown: false)
         escUp?.post(tap: .cghidEventTap)
-
-        usleep(25000)
-        // 空格键按下与抬起 (0x31) 确保唤起登录窗焦点
-        let spaceDown = CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: true)
-        spaceDown?.post(tap: .cghidEventTap)
-        usleep(15000)
-        let spaceUp = CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: false)
-        spaceUp?.post(tap: .cghidEventTap)
     }
 }
