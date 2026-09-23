@@ -37,6 +37,7 @@
 | **电源与屏幕管理** | **`pmset displaysleepnow` + `IOPMAssertionDeclareUserActivity`** | 纯显示屏黑屏/亮屏，不影响主机 CPU 和后台进程 |
 | **键鼠活跃感知** | **`CGEventSource.secondsSinceLastEventType`** | 零开销获取系统键鼠最后活动时间，打字期间关停摄像头熄灯 |
 | **媒体观影探测** | **`IOPMCopyAssertionsStatus`** | 感知 YouTube/视频/会议电源断言，观影时相机静默、屏幕常亮 |
+| **全场景免密授权** | **macOS Keychain + `cghidEventTap`** | 密码加密存入系统钥匙串，红外验证通过后秒级填入弹窗与锁屏 |
 
 ---
 
