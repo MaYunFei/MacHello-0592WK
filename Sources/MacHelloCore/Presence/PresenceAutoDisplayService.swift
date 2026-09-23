@@ -306,12 +306,19 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         lastSeenOwnerTime = Date()
         lastProbeSuccessTime = Date()
 
-        // 1. 如果屏幕已息屏，机主出现立刻点亮屏幕！
+        // 1. 如果屏幕已息屏，机主出现立刻点亮屏幕并自动解锁进桌面！
         if displayManager.isDisplayAsleep {
             displayManager.wakeDisplay()
             emitStateChange()
-        } else if changed {
-            emitStateChange()
+            AutoAuthManager.shared.unlockScreenIfNeeded()
+        } else {
+            // 如果屏幕当前正处于锁定界面 (例如快捷键 Cmd+Ctrl+Q 锁定)，机主在位立刻自动解锁
+            if AutoAuthManager.shared.isScreenLocked() {
+                AutoAuthManager.shared.unlockScreenIfNeeded()
+            }
+            if changed {
+                emitStateChange()
+            }
         }
 
         // 2. 如果屏幕亮着且开启了智能节能：既然已经看准了机主在位，探查立刻圆满完成！

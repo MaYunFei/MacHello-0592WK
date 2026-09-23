@@ -24,6 +24,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isPAMInstalled: Bool = false
     @Published public var isLaunchAtLoginEnabled: Bool = false
 
+    // 全场景免密授权与钥匙串
+    @Published public var isAppAuthEnabled: Bool = true
+    @Published public var isLockScreenUnlockEnabled: Bool = true
+    @Published public var hasStoredPassword: Bool = false
+    @Published public var isAccessibilityTrusted: Bool = false
+
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
     private let autoDisplayService = PresenceAutoDisplayService.shared
@@ -68,6 +74,11 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
         self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
         self.absenceTimeout = autoDisplayService.absenceTimeout
+
+        self.isAppAuthEnabled = AutoAuthManager.shared.isAppAuthEnabled
+        self.isLockScreenUnlockEnabled = AutoAuthManager.shared.isLockScreenUnlockEnabled
+        self.hasStoredPassword = KeychainHelper.shared.hasPassword()
+        self.isAccessibilityTrusted = AccessibilityHelper.shared.isTrusted
     }
 
     public func toggleAutoDisplay() {
@@ -162,6 +173,64 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public func clearFaceData() {
         FaceDatabase.shared.clear()
         refreshStatus()
+    }
+
+    // MARK: - 全场景免密与钥匙串控制
+
+    public func toggleAppAuth() {
+        let newState = !isAppAuthEnabled
+        AutoAuthManager.shared.isAppAuthEnabled = newState
+        self.isAppAuthEnabled = newState
+    }
+
+    public func toggleLockScreenUnlock() {
+        let newState = !isLockScreenUnlockEnabled
+        AutoAuthManager.shared.isLockScreenUnlockEnabled = newState
+        self.isLockScreenUnlockEnabled = newState
+    }
+
+    public func promptToStorePassword() {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "设置系统免密解锁密码"
+            alert.informativeText = "该密码将被加密保存在 macOS 原生安全钥匙串 (Keychain) 中。仅在 850nm 红外相机精准比对机主本人面容成功后，才会由底层辅助功能模拟输入解锁。"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "保存密码")
+            alert.addButton(withTitle: "取消")
+
+            let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+            input.placeholderString = "请输入当前账户的登录/管理员密码"
+            alert.accessoryView = input
+
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                let pw = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !pw.isEmpty {
+                    KeychainHelper.shared.savePassword(pw)
+                    self.refreshStatus()
+                }
+            }
+        }
+    }
+
+    public func deleteStoredPassword() {
+        KeychainHelper.shared.deletePassword()
+        refreshStatus()
+    }
+
+    public func openAccessibilitySettings() {
+        AccessibilityHelper.shared.openAccessibilitySettings()
+    }
+
+    public func triggerAdminPromptTest() {
+        DispatchQueue.global().async {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            p.arguments = ["-e", "do shell script \"echo 恭喜！MacHello Face ID 自动认证成功\" with administrator privileges"]
+            try? p.run()
+            p.waitUntilExit()
+        }
     }
 
     public func displayPowerStateDidChange(isDisplayAsleep: Bool) {

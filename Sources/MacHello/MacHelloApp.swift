@@ -134,7 +134,56 @@ struct MacHelloApp: App {
                     Text(prefix + (service.isPAMInstalled ? "终端 Sudo 刷脸免密提权 (已启用·点击卸载)" : "终端 Sudo 刷脸免密提权 (点击一键配置)"))
                 }
 
-                // 5. 开机自启动
+                // 5. 锁屏与应用全场景 Face ID 自动免密授权
+                Menu("🔐 全场景 Face ID 自动免密授权") {
+                    Button(action: {
+                        service.toggleAppAuth()
+                    }) {
+                        let prefix = service.isAppAuthEnabled ? "✓ " : "   "
+                        Text(prefix + "应用管理员弹窗 Face ID 自动认证")
+                    }
+
+                    Button(action: {
+                        service.toggleLockScreenUnlock()
+                    }) {
+                        let prefix = service.isLockScreenUnlockEnabled ? "✓ " : "   "
+                        Text(prefix + "锁屏感应唤醒自动解锁进桌面")
+                    }
+
+                    Divider()
+
+                    if service.hasStoredPassword {
+                        Text("🔑 钥匙串密码: 已安全保存 ✓")
+                        Button("更新钥匙串密码...") {
+                            service.promptToStorePassword()
+                        }
+                        Button("清除保存的密码") {
+                            service.deleteStoredPassword()
+                        }
+                    } else {
+                        Button("⚠️ 设置钥匙串免密解锁密码...") {
+                            service.promptToStorePassword()
+                        }
+                    }
+
+                    Divider()
+
+                    if service.isAccessibilityTrusted {
+                        Text("🛡️ 辅助功能权限: 已获得 ✓")
+                    } else {
+                        Button("⚠️ 授予辅助功能权限 (点击打开系统设置)...") {
+                            service.openAccessibilitySettings()
+                        }
+                    }
+
+                    Divider()
+
+                    Button("🧪 测试管理员提权弹窗 (Face ID)...") {
+                        service.triggerAdminPromptTest()
+                    }
+                }
+
+                // 6. 开机自启动
                 Button(action: {
                     service.toggleLaunchAtLogin()
                 }) {
