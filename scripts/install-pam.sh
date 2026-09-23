@@ -13,11 +13,18 @@ echo "======================================================"
 echo "  🍏 MacHello PAM 终端 Sudo 刷脸免密提权安装程序"
 echo "======================================================"
 
-# 1. 编译二进制
-"$DIR/scripts/build-pam.sh"
-
-AUTH_BIN="$DIR/.build/release/MacHelloAuth"
-PAM_SO="$DIR/.build/release/pam_machello.so"
+# 1. 查找二进制
+if [ -f "$DIR/machello-auth" ] && [ -f "$DIR/pam_machello.so" ]; then
+    AUTH_BIN="$DIR/machello-auth"
+    PAM_SO="$DIR/pam_machello.so"
+elif [ -f "/Applications/MacHello.app/Contents/Resources/machello-auth" ]; then
+    AUTH_BIN="/Applications/MacHello.app/Contents/Resources/machello-auth"
+    PAM_SO="/Applications/MacHello.app/Contents/Resources/pam_machello.so"
+else
+    "$DIR/scripts/build-pam.sh"
+    AUTH_BIN="$DIR/.build/release/MacHelloAuth"
+    PAM_SO="$DIR/.build/release/pam_machello.so"
+fi
 
 # 2. 安装目标路径
 INSTALL_BIN="/usr/local/bin/machello-auth"

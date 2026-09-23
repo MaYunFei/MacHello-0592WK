@@ -51,6 +51,10 @@ cp .build/release/MacHelloAuth "$RESOURCES_DIR/machello-auth"
 chmod 755 "$RESOURCES_DIR/machello-auth"
 cp .build/release/pam_machello.so "$RESOURCES_DIR/pam_machello.so"
 chmod 555 "$RESOURCES_DIR/pam_machello.so"
+cp scripts/install-pam.sh "$RESOURCES_DIR/install-pam.sh"
+chmod 755 "$RESOURCES_DIR/install-pam.sh"
+cp scripts/uninstall-pam.sh "$RESOURCES_DIR/uninstall-pam.sh"
+chmod 755 "$RESOURCES_DIR/uninstall-pam.sh"
 cp AppIcon.icns "$RESOURCES_DIR/AppIcon.icns"
 
 # 生成 Info.plist
