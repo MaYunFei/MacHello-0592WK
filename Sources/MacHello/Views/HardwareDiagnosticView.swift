@@ -249,8 +249,8 @@ public final class DiagnosticViewModel: ObservableObject {
 
             do {
                 try cameraService.start(mode: .rgb)
-                // 持续预览 2.0 秒，让画面充分曝光并让用户看到实时动态
-                Thread.sleep(forTimeInterval: 2.0)
+                // 采集 0.8 秒（约 24 帧），与真实业务场景对齐
+                Thread.sleep(forTimeInterval: 0.8)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的黑帧污染画面
                 cameraService.stop()
                 rgbHelper.saveSnapshot()
@@ -273,7 +273,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
             // Step 2: 验证 UVC 扩展单元
             DiagnosticFileManager.shared.log("Step 2: 正在验证 UVC 扩展单元 (0bda:5767)...")
-            Thread.sleep(forTimeInterval: 0.3)
+            Thread.sleep(forTimeInterval: 0.15)
             guard irController.isConnected else {
                 DiagnosticFileManager.shared.log("Step 2: 未找到 USB 0bda:5767 接口")
                 DispatchQueue.main.async {
@@ -291,7 +291,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
             // Step 3: 触发 IR 模式
             DiagnosticFileManager.shared.log("Step 3: 正在下发 UVC 寄存器切换至 IR 模式 (0x00)...")
-            Thread.sleep(forTimeInterval: 0.3)
+            Thread.sleep(forTimeInterval: 0.15)
             let irSuccess = irController.setMode(.ir)
             guard irSuccess else {
                 DiagnosticFileManager.shared.log("Step 3: UVC 寄存器写入失败")
@@ -310,7 +310,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
             // Step 4: 捕获 IR 视频流 (切换为红外灰度采集)
             DiagnosticFileManager.shared.log("Step 4: 正在启动 IR 640x480 YUY2 视频采集...")
-            Thread.sleep(forTimeInterval: 0.4)
+            Thread.sleep(forTimeInterval: 0.2)
             let irHelper = DiagnosticCaptureHelper()
             irHelper.isGrayscale = true
             irHelper.isIRTarget = true
@@ -321,8 +321,8 @@ public final class DiagnosticViewModel: ObservableObject {
 
             do {
                 try cameraService.start(mode: .ir)
-                // 给予 1.2 秒时间让红外夜视曝光增益充分爬升，处于人眼安全看门狗阈值内
-                Thread.sleep(forTimeInterval: 1.2)
+                // 采集 0.8 秒（约 24 帧），与真实 Face ID 核验业务时长严格 1:1 对齐
+                Thread.sleep(forTimeInterval: 0.8)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的空帧/黑帧冲刷
                 cameraService.stop()
                 irHelper.saveSnapshot()
