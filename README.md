@@ -40,7 +40,23 @@
 - **推荐硬件**：**Dell CN-0592WK** (DP/N: `0592WK` / 戴尔原厂拆机模组，性价比之王，二手仅需 10~20 元)
 - **主控 ISP 芯片**：Realtek RTS5822 / RTS5767
 - **USB 硬件 ID**：`0bda:5767` (VendorID: `0x0bda`, ProductID: `0x5767`)
-- **硬件特性**：独立物理红外泛光 LED，受控于 Realtek UVC Extension Unit (Unit 4, 寄存器 `0x9f00`)
+- **硬件特性**：
+  - 硬件双目模组：RGB 彩色镜头 (720P) + 独立物理近红外镜头 (640x480 YUY2) + 850nm 红外 LED 补光灯珠；
+  - 受控于 Realtek UVC Extension Unit (Unit 4, 寄存器 `0x9f00`)。
+
+---
+
+## 🧪 硬件测试与验证
+
+本项目内置了原生的自检诊断工具，用于一键验证普通 RGB 画面与近红外夜视切换：
+
+```bash
+# 运行单元测试
+swift test
+
+# 运行硬件诊断工具（自动测试可见光、红外切换并保存测试图像至 Tests/Snapshots/，随后安全复位）
+swift run MacHelloDoctor
+```
 
 ---
 
