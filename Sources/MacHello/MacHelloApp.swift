@@ -150,6 +150,13 @@ struct MacHelloApp: App {
                         Text(prefix + "锁屏感应唤醒自动解锁进桌面")
                     }
 
+                    Button(action: {
+                        service.toggleAudioFeedback()
+                    }) {
+                        let prefix = service.isAudioFeedbackEnabled ? "✓ " : "   "
+                        Text(prefix + "播放 Face ID 认证成功提示音 (Tink)")
+                    }
+
                     Divider()
 
                     if service.hasStoredPassword {

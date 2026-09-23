@@ -27,6 +27,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     // 全场景免密授权与钥匙串
     @Published public var isAppAuthEnabled: Bool = true
     @Published public var isLockScreenUnlockEnabled: Bool = true
+    @Published public var isAudioFeedbackEnabled: Bool = true
     @Published public var hasStoredPassword: Bool = false
     @Published public var isAccessibilityTrusted: Bool = false
 
@@ -77,6 +78,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
         self.isAppAuthEnabled = AutoAuthManager.shared.isAppAuthEnabled
         self.isLockScreenUnlockEnabled = AutoAuthManager.shared.isLockScreenUnlockEnabled
+        self.isAudioFeedbackEnabled = AutoAuthManager.shared.isAudioFeedbackEnabled
         self.hasStoredPassword = KeychainHelper.shared.hasPassword()
         self.isAccessibilityTrusted = AccessibilityHelper.shared.isTrusted
     }
@@ -187,6 +189,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !isLockScreenUnlockEnabled
         AutoAuthManager.shared.isLockScreenUnlockEnabled = newState
         self.isLockScreenUnlockEnabled = newState
+    }
+
+    public func toggleAudioFeedback() {
+        let newState = !isAudioFeedbackEnabled
+        AutoAuthManager.shared.isAudioFeedbackEnabled = newState
+        self.isAudioFeedbackEnabled = newState
     }
 
     public func promptToStorePassword() {

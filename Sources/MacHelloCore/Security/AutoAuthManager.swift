@@ -14,6 +14,19 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
     private let defaultsKeyAppAuth = "com.machello.isAppAuthEnabled"
     private let defaultsKeyLockScreenUnlock = "com.machello.isLockScreenUnlockEnabled"
+    private let defaultsKeyAudioFeedback = "com.machello.isAudioFeedbackEnabled"
+
+    public var isAudioFeedbackEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeyAudioFeedback) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeyAudioFeedback)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyAudioFeedback)
+        }
+    }
 
     public var isAppAuthEnabled: Bool {
         get {
@@ -156,16 +169,18 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
         lastAuthSuccessTime = now
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self = self else { return }
             guard self.isScreenLocked() else { return }
             guard let password = self.keychain.fetchPassword() else { return }
 
             print("[AutoAuth] 机主已核验，正在模拟唤醒并输入密码自动解锁进桌面...")
             self.accessibility.wakeLoginPrompt()
-            usleep(150000) // 150ms 等待输入框获得焦点
+            usleep(250000) // 250ms 等待输入框完全获得焦点与动画就绪
             self.accessibility.simulateKeystrokes(password, pressEnter: true)
-            self.audio.playSuccess()
+            if self.isAudioFeedbackEnabled {
+                self.audio.playSuccess()
+            }
         }
     }
 
@@ -214,7 +229,9 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         stopAuth()
 
         // 播放提示音
-        audio.playSuccess()
+        if isAudioFeedbackEnabled {
+            audio.playSuccess()
+        }
 
         // 从钥匙串读取解密密码并模拟输入
         guard let password = keychain.fetchPassword() else { return }
