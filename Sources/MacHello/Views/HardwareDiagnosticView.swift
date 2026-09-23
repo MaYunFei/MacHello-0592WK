@@ -40,6 +40,18 @@ final class DiagnosticFileManager {
         return dir
     }
 
+    var irFramesDirectory: URL {
+        let dir = diagnosticsDirectory.appendingPathComponent("ir_frames", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func resetIRFramesFolder() {
+        let dir = irFramesDirectory
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
     var rgbImagePath: URL {
         return diagnosticsDirectory.appendingPathComponent("rgb.jpg")
     }
@@ -81,6 +93,10 @@ final class DiagnosticFileManager {
     func openFolder() {
         NSWorkspace.shared.open(diagnosticsDirectory)
     }
+
+    func openIRFramesFolder() {
+        NSWorkspace.shared.open(irFramesDirectory)
+    }
 }
 
 final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
@@ -92,6 +108,8 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     public var frameCount = 0
     private var bestJPEGData: Data?
     private var bestLuminance: Float = 0.0
+    private var faceDetectedInBest: Bool = false
+    private let faceDetector = FaceFeatureExtractor()
 
     private func calculateAverageLuminance(pixelBuffer: CVPixelBuffer) -> Float {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -122,22 +140,9 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
 
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         frameCount += 1
-        // 红外模式下跳过最初 6 帧，避免曝光增益爬升初期的暗帧
-        if isGrayscale && frameCount < 7 { return }
+        let currentFrameIndex = frameCount
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let lum = calculateAverageLuminance(pixelBuffer: pixelBuffer)
-
-        // 核心保护：如果之前已经抓取到正常照亮的人脸（bestLuminance > 0.06），而新帧变黑（lum < 0.03，如硬件眼部保护自动灭灯或停机冲刷），坚决拒绝覆盖！
-        if isGrayscale && bestLuminance > 0.06 && lum < 0.035 {
-            return
-        }
-
-        let now = CACurrentMediaTime()
-        // 限制在 ~15fps (约 65ms 一帧)，既丝滑生动，又绝不卡顿 UI
-        guard now - lastUpdate >= 0.065 else { return }
-        lastUpdate = now
-
         var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         if isGrayscale {
             if let filter = CIFilter(name: "CIColorControls") {
@@ -149,18 +154,46 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
             }
         }
 
-        // 使用 GPU/Metal 立即渲染成独立不可变的 CGImage，绝不依赖 AVFoundation 内部缓冲区生命周期
-        if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
-            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-            DispatchQueue.main.async { [weak self] in
-                self?.onFrame?(nsImage)
+        let lum = calculateAverageLuminance(pixelBuffer: pixelBuffer)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let jpegData = ciContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [:]) else { return }
+
+        // 如果是 IR 模式，无遗漏保存每一张全量原生实拍帧
+        if isIRTarget {
+            let filename = String(format: "frame_%02d.jpg", currentFrameIndex)
+            let frameURL = DiagnosticFileManager.shared.irFramesDirectory.appendingPathComponent(filename)
+            try? jpegData.write(to: frameURL)
+
+            // 并发检测当前帧人脸
+            let faces = faceDetector.extract(from: pixelBuffer)
+            let hasFace = !faces.isEmpty
+            DiagnosticFileManager.shared.log("IR Frame \(String(format: "%02d", currentFrameIndex)): \(jpegData.count) bytes, 亮度: \(String(format: "%.3f", lum)), 人脸检测: \(hasFace ? "✓ 成功" : "× 无")")
+
+            // 评判最佳帧：优先选择检测到人脸的帧；若都有或都没有，选择亮度最高的稳态帧
+            if hasFace && !faceDetectedInBest {
+                bestJPEGData = jpegData
+                bestLuminance = lum
+                faceDetectedInBest = true
+            } else if hasFace == faceDetectedInBest && lum >= bestLuminance {
+                bestJPEGData = jpegData
+                bestLuminance = lum
+            } else if bestJPEGData == nil {
+                bestJPEGData = jpegData
+                bestLuminance = lum
             }
-            // 实时保留最佳亮度有效帧的 JPEG 数据，供测试存档查验
-            let colorSpace = CGColorSpaceCreateDeviceRGB()
-            if let data = ciContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [:]) {
-                if lum >= self.bestLuminance || self.bestJPEGData == nil {
-                    self.bestLuminance = lum
-                    self.bestJPEGData = data
+        } else {
+            // RGB 模式保存最后或最佳
+            bestJPEGData = jpegData
+        }
+
+        // UI 实时预览 (以 ~15fps 节流避免阻塞主线程)
+        let now = CACurrentMediaTime()
+        if now - lastUpdate >= 0.065 {
+            lastUpdate = now
+            if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+                let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+                DispatchQueue.main.async { [weak self] in
+                    self?.onFrame?(nsImage)
                 }
             }
         }
@@ -310,6 +343,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
             // Step 4: 捕获 IR 视频流 (切换为红外灰度采集)
             DiagnosticFileManager.shared.log("Step 4: 正在启动 IR 640x480 YUY2 视频采集...")
+            DiagnosticFileManager.shared.resetIRFramesFolder()
             Thread.sleep(forTimeInterval: 0.2)
             let irHelper = DiagnosticCaptureHelper()
             irHelper.isGrayscale = true
@@ -321,13 +355,13 @@ public final class DiagnosticViewModel: ObservableObject {
 
             do {
                 try cameraService.start(mode: .ir)
-                // 采集 0.8 秒（约 24 帧），与真实 Face ID 核验业务时长严格 1:1 对齐
-                Thread.sleep(forTimeInterval: 0.8)
+                // 采集 1.2 秒（约 36 帧），给足 CMOS 自动曝光增益爬升时间，并全量落盘每一帧
+                Thread.sleep(forTimeInterval: 1.2)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的空帧/黑帧冲刷
                 cameraService.stop()
                 irHelper.saveSnapshot()
                 irController.resetToRGB()
-                DiagnosticFileManager.shared.log("Step 4: IR 测试完成，捕获 \(irHelper.frameCount) 帧")
+                DiagnosticFileManager.shared.log("Step 4: IR 测试完成，捕获 \(irHelper.frameCount) 帧，全部帧已存入 ir_frames/")
                 DiagnosticFileManager.shared.log("=== 硬件自检全部通过 ===")
 
                 DispatchQueue.main.async {
@@ -525,8 +559,13 @@ public struct HardwareDiagnosticView: View {
                 .disabled(vm.isTesting || !vm.isConnected)
                 .keyboardShortcut(.defaultAction)
 
-                Button("📂 打开日志与截图") {
+                Button("📂 日志与截图") {
                     DiagnosticFileManager.shared.openFolder()
+                }
+                .font(.subheadline)
+
+                Button("🖼️ 查看全部红外帧") {
+                    DiagnosticFileManager.shared.openIRFramesFolder()
                 }
                 .font(.subheadline)
 
