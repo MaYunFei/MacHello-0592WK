@@ -50,6 +50,11 @@ final class MacHelloTests: XCTestCase {
         XCTAssertFalse(detector.isPersonPresent)
     }
 
+    func testInputIdleMonitor() {
+        let idle = InputIdleMonitor.shared.idleSeconds
+        XCTAssertGreaterThanOrEqual(idle, 0.0)
+    }
+
     func testFaceDatabaseCosineSimilarity() {
         let vecA: [Float] = [1.0, 0.0, 0.0]
         let vecB: [Float] = [1.0, 0.0, 0.0]

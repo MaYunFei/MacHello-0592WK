@@ -13,6 +13,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     // 人体感应（走开息屏 / 来人亮屏）状态
     @Published public var isAutoDisplayEnabled: Bool = false
     @Published public var requireOwnerVerification: Bool = true
+    @Published public var isSmartIdlePowerSavingEnabled: Bool = true
     @Published public var absenceTimeout: TimeInterval = 15.0
     @Published public var isDisplayAsleep: Bool = false
     @Published public var isPersonPresent: Bool = false
@@ -27,6 +28,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         displayManager.addObserver(self)
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
+        self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
 
@@ -55,6 +57,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.enrolledSamplesCount = profile?.samples.count ?? 0
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
+        self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
         self.absenceTimeout = autoDisplayService.absenceTimeout
     }
 
@@ -62,6 +65,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !isAutoDisplayEnabled
         autoDisplayService.isEnabled = newState
         self.isAutoDisplayEnabled = newState
+    }
+
+    public func toggleSmartIdlePowerSaving() {
+        let newState = !isSmartIdlePowerSavingEnabled
+        autoDisplayService.isSmartIdlePowerSavingEnabled = newState
+        self.isSmartIdlePowerSavingEnabled = newState
     }
 
     public func toggleRequireOwnerVerification() {

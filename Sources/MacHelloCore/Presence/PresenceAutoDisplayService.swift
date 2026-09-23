@@ -10,10 +10,12 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private let displayManager = DisplayPowerManager.shared
     private let extractor = FaceFeatureExtractor.shared
     private let faceDb = FaceDatabase.shared
+    private let idleMonitor = InputIdleMonitor.shared
 
     private let defaultsKeyEnabled = "com.machello.autoDisplayEnabled"
     private let defaultsKeyTimeout = "com.machello.absenceTimeout"
     private let defaultsKeyOwnerOnly = "com.machello.requireOwnerVerification"
+    private let defaultsKeySmartIdle = "com.machello.smartIdlePowerSaving"
 
     public var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: defaultsKeyEnabled) }
@@ -26,7 +28,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public var absenceTimeout: TimeInterval {
         get {
             let val = UserDefaults.standard.double(forKey: defaultsKeyTimeout)
-            return val > 0 ? val : 15.0 // 默认 15 秒（测试与使用兼顾）
+            return val > 0 ? val : 15.0 // 默认 15 秒
         }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKeyTimeout)
@@ -37,12 +39,25 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public var requireOwnerVerification: Bool {
         get {
             if UserDefaults.standard.object(forKey: defaultsKeyOwnerOnly) == nil {
-                return true // 默认开启
+                return true
             }
             return UserDefaults.standard.bool(forKey: defaultsKeyOwnerOnly)
         }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKeyOwnerOnly)
+        }
+    }
+
+    /// 智能键鼠感知与低功耗模式（打字/鼠标操作时彻底关闭摄像头，指示灯灭，0% CPU）
+    public var isSmartIdlePowerSavingEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeySmartIdle) == nil {
+                return true // 默认开启
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeySmartIdle)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeySmartIdle)
         }
     }
 
@@ -52,7 +67,10 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private var lastSeenOwnerTime: Date = Date()
     private var absenceTimer: Timer?
     private var lastProcessedFrameTime: Date = .distantPast
-    private let frameProcessingInterval: TimeInterval = 0.2 // 约 5 FPS 采样，极低 CPU 占用
+    private let frameProcessingInterval: TimeInterval = 0.25 // 约 4 FPS 采样
+
+    // 息屏脉冲巡检计数
+    private var pulseCycleCounter: Int = 0
 
     public var onStateUpdated: ((_ isEnabled: Bool, _ isPresent: Bool, _ isOwner: Bool, _ isDisplayAsleep: Bool) -> Void)?
 
@@ -83,10 +101,13 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         lastSeenOwnerTime = Date()
         presenceDetector.autoNotify = false
 
-        if !captureService.isRunning {
-            try? captureService.start(mode: .rgb)
+        // 如果用户正在打字且开启了智能节能，不立刻起相机；否则启动相机
+        if !isSmartIdlePowerSavingEnabled || idleMonitor.idleSeconds >= 3.0 {
+            if !captureService.isRunning {
+                try? captureService.start(mode: .rgb)
+            }
+            captureService.delegate = self
         }
-        captureService.delegate = self
 
         startAbsenceCheckTimer()
     }
@@ -113,15 +134,86 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private func checkAbsenceStatus() {
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
 
-        let isOwnerSitting = requireOwnerVerification && faceDb.isEnrolled ? isOwnerVerified : isPersonPresent
+        // 情况一：屏幕当前处于点亮工作状态
+        if !displayManager.isDisplayAsleep {
+            pulseCycleCounter = 0
 
-        // 如果机主不在位且屏幕当前亮着
-        if !isOwnerSitting && !displayManager.isDisplayAsleep {
-            let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
-            if elapsed >= absenceTimeout {
-                // 走开超时，执行息屏
-                displayManager.sleepDisplay()
-                emitStateChange()
+            if isSmartIdlePowerSavingEnabled {
+                let idle = idleMonitor.idleSeconds
+                let probeThreshold = max(3.0, absenceTimeout - 3.0)
+
+                // 1. 用户正在积极操作键盘鼠标（停手时间 < 阈值）
+                if idle < probeThreshold {
+                    lastSeenOwnerTime = Date()
+                    let changed = (!isPersonPresent || !isOwnerVerified)
+                    isPersonPresent = true
+                    isOwnerVerified = true
+
+                    // 既然机主正在打字操作，果断关闭摄像头！让指示灯 100% 熄灭，CPU 归零！
+                    if captureService.isRunning {
+                        captureService.stop()
+                    }
+                    if changed {
+                        emitStateChange()
+                    }
+                    return
+                } else {
+                    // 2. 停手超时：用户已有一段时间没碰键盘鼠标了
+                    // 启动摄像头进行 0.5s~3s 快速观察（判断是离席还是在安静阅读）
+                    if !captureService.isRunning {
+                        try? captureService.start(mode: .rgb)
+                        captureService.delegate = self
+                    }
+
+                    // 检查是否已达到离席超时上限
+                    let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
+                    if elapsed >= absenceTimeout {
+                        // 确认无人，立即关闭显示器息屏
+                        displayManager.sleepDisplay()
+                        if captureService.isRunning {
+                            captureService.stop()
+                        }
+                        emitStateChange()
+                    }
+                }
+            } else {
+                // 常规持续视觉模式
+                if !captureService.isRunning {
+                    try? captureService.start(mode: .rgb)
+                    captureService.delegate = self
+                }
+                let isOwnerSitting = requireOwnerVerification && faceDb.isEnrolled ? isOwnerVerified : isPersonPresent
+                if !isOwnerSitting {
+                    let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
+                    if elapsed >= absenceTimeout {
+                        displayManager.sleepDisplay()
+                        emitStateChange()
+                    }
+                }
+            }
+        } else {
+            // 情况二：屏幕处于息屏黑屏状态
+            if isSmartIdlePowerSavingEnabled {
+                // 间歇低频脉冲巡检：每 3 秒启动相机探测 1 秒，无人则关停，指示灯大部分时间熄灭
+                pulseCycleCounter = (pulseCycleCounter + 1) % 3
+                if pulseCycleCounter == 0 {
+                    if !captureService.isRunning {
+                        try? captureService.start(mode: .rgb)
+                        captureService.delegate = self
+                    }
+                } else if pulseCycleCounter == 1 {
+                    // 维持检测中
+                } else {
+                    // 巡检周期结束，暂无人员靠近，关停相机以熄灭指示灯
+                    if captureService.isRunning {
+                        captureService.stop()
+                    }
+                }
+            } else {
+                if !captureService.isRunning {
+                    try? captureService.start(mode: .rgb)
+                    captureService.delegate = self
+                }
             }
         }
     }
@@ -131,14 +223,13 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
 
-        // 帧率节流 (约 5 FPS)
+        // 帧率节流 (约 4 FPS)
         let now = Date()
         guard now.timeIntervalSince(lastProcessedFrameTime) >= frameProcessingInterval else { return }
         lastProcessedFrameTime = now
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // 1. 如果启用了机主鉴权且本地已有录入数据
         if requireOwnerVerification && faceDb.isEnrolled {
             let faces = extractor.extract(from: pixelBuffer)
             if faces.isEmpty {
@@ -162,7 +253,6 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 }
             }
         } else {
-            // 未启用或未录入时：退化为通用人脸检测
             presenceDetector.processSampleBuffer(sampleBuffer)
         }
     }
@@ -178,8 +268,12 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             displayManager.wakeDisplay()
             emitStateChange()
         } else if changed {
-            // 只有当状态真正发生转变时（例如从无人/陌生人变为机主），才通知 UI 刷新，坚决不每帧刷新！
             emitStateChange()
+        }
+
+        // 如果开启了智能节能且用户正在工作屏幕前，确认人在位后可关闭相机熄灭灯
+        if !displayManager.isDisplayAsleep && isSmartIdlePowerSavingEnabled {
+            // 人在位，稍后由 checkAbsenceStatus 维持休眠
         }
     }
 

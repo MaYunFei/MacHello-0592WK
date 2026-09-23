@@ -46,6 +46,14 @@ struct MacHelloApp: App {
                     }
                     .disabled(!service.isEnrolled)
 
+                    // 智能键鼠感知与低功耗模式
+                    Button(action: {
+                        service.toggleSmartIdlePowerSaving()
+                    }) {
+                        let prefix = service.isSmartIdlePowerSavingEnabled ? "✓ " : "   "
+                        Text(prefix + "智能键鼠感知 (打字时熄灯，0% CPU)")
+                    }
+
                     // 离席息屏时长选择子菜单
                     Menu("离席等待时长") {
                         Button(action: { service.setAbsenceTimeout(10) }) {
