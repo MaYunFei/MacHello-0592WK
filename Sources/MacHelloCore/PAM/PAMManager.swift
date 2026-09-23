@@ -26,7 +26,6 @@ public final class PAMManager {
     private func resolveSourceFiles() -> (authBin: String, pamSo: String)? {
         let fm = FileManager.default
 
-        // 1. 从 App Bundle 的 Contents/Resources 查找
         if let resURL = Bundle.main.resourceURL {
             let bundleAuth = resURL.appendingPathComponent("machello-auth").path
             let bundlePam = resURL.appendingPathComponent("pam_machello.so").path
@@ -35,7 +34,6 @@ public final class PAMManager {
             }
         }
 
-        // 2. 从当前运行目录查找
         let cwd = FileManager.default.currentDirectoryPath
         let buildAuth = "\(cwd)/.build/release/MacHelloAuth"
         let buildPam = "\(cwd)/.build/release/pam_machello.so"
@@ -43,7 +41,6 @@ public final class PAMManager {
             return (buildAuth, buildPam)
         }
 
-        // 3. 从已安装的备用路径查找
         if fm.fileExists(atPath: authBinPath) && fm.fileExists(atPath: pamSoPath) {
             return (authBinPath, pamSoPath)
         }
@@ -51,8 +48,8 @@ public final class PAMManager {
         return nil
     }
 
-    /// 在终端中直接运行安装脚本
-    public func runInstallInTerminal() {
+    /// 在终端中直接运行安装脚本（使用标准的 .command 机制，避开 AppleScript 自动化权限拦截）
+    public func runInstallInTerminal(onCompleted: (() -> Void)? = nil) {
         let scriptPath: String
         let fm = FileManager.default
         if let resURL = Bundle.main.resourceURL,
@@ -63,18 +60,48 @@ public final class PAMManager {
             scriptPath = "\(cwd)/scripts/install-pam.sh"
         }
 
-        let appleScript = """
-        tell application "Terminal"
-            activate
-            do script "sudo '\(scriptPath)'"
-        end tell
+        let commandFile = "/tmp/machello_install.command"
+        let commandContent = """
+        #!/bin/bash
+        clear
+        echo "======================================================"
+        echo "  🍏 MacHello 终端 Sudo 刷脸提权一键配置"
+        echo "======================================================"
+        echo ""
+        echo "👉 请输入您的 Mac 登录密码以完成系统 PAM 授权配置："
+        echo ""
+        sudo "\(scriptPath)"
+        echo ""
+        echo "======================================================"
+        echo "🎉 全部配置已完成！按任意键关闭此窗口..."
+        echo "======================================================"
+        read -n 1 -s
+        exit 0
         """
-        var err: NSDictionary?
-        NSAppleScript(source: appleScript)?.executeAndReturnError(&err)
+
+        try? commandContent.write(toFile: commandFile, atomically: true, encoding: .utf8)
+        _ = try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: commandFile)
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-a", "Terminal", commandFile]
+        try? task.run()
+
+        // 轮询检查安装结果，一旦生效立即回调通知
+        var checksRemaining = 30
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
+            checksRemaining -= 1
+            if PAMManager.shared.isInstalled {
+                timer.invalidate()
+                onCompleted?()
+            } else if checksRemaining <= 0 {
+                timer.invalidate()
+            }
+        }
     }
 
     /// 在终端中直接运行卸载脚本
-    public func runUninstallInTerminal() {
+    public func runUninstallInTerminal(onCompleted: (() -> Void)? = nil) {
         let scriptPath: String
         let fm = FileManager.default
         if let resURL = Bundle.main.resourceURL,
@@ -85,14 +112,43 @@ public final class PAMManager {
             scriptPath = "\(cwd)/scripts/uninstall-pam.sh"
         }
 
-        let appleScript = """
-        tell application "Terminal"
-            activate
-            do script "sudo '\(scriptPath)'"
-        end tell
+        let commandFile = "/tmp/machello_uninstall.command"
+        let commandContent = """
+        #!/bin/bash
+        clear
+        echo "======================================================"
+        echo "  🧹 MacHello 终端 Sudo 刷脸提权卸载还原"
+        echo "======================================================"
+        echo ""
+        echo "👉 请输入您的 Mac 登录密码以安全还原系统 PAM 配置："
+        echo ""
+        sudo "\(scriptPath)"
+        echo ""
+        echo "======================================================"
+        echo "✅ 卸载已完成！按任意键关闭此窗口..."
+        echo "======================================================"
+        read -n 1 -s
+        exit 0
         """
-        var err: NSDictionary?
-        NSAppleScript(source: appleScript)?.executeAndReturnError(&err)
+
+        try? commandContent.write(toFile: commandFile, atomically: true, encoding: .utf8)
+        _ = try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: commandFile)
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-a", "Terminal", commandFile]
+        try? task.run()
+
+        var checksRemaining = 30
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { timer in
+            checksRemaining -= 1
+            if !PAMManager.shared.isInstalled {
+                timer.invalidate()
+                onCompleted?()
+            } else if checksRemaining <= 0 {
+                timer.invalidate()
+            }
+        }
     }
 
     /// 打开系统偏好设置：完全磁盘访问权限

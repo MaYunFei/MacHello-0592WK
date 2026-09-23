@@ -130,7 +130,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             alert.addButton(withTitle: "取消")
             let resp = alert.runModal()
             if resp == .alertFirstButtonReturn {
-                PAMManager.shared.runInstallInTerminal()
+                PAMManager.shared.runInstallInTerminal { [weak self] in
+                    DispatchQueue.main.async {
+                        self?.isPAMInstalled = true
+                        self?.objectWillChange.send()
+                    }
+                }
             } else if resp == .alertSecondButtonReturn {
                 PAMManager.shared.openFullDiskAccessSettings()
             }
