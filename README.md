@@ -49,6 +49,19 @@
 
 ---
 
+## 💻 兼容性与系统版本支持 (Supported Systems)
+
+| 平台 / 系统特性 | 支持情况 | 说明 |
+| :--- | :--- | :--- |
+| **macOS 15.0+ (Sequoia 及最新版本)** | ✅ **完美支持** | 原生兼容 Sequoia 严格的 `/etc/pam.d` 安全保护机制 |
+| **macOS 14.0 (Sonoma)** | ✅ **完美支持** | 状态栏原生常驻，支持 `sudo_local` 提权与 Apple Vision |
+| **macOS 13.0 (Ventura)** | ✅ **最低支持要求** | 支持 `SMAppService` 开机无感自启 |
+| **Apple Silicon (M 系列芯片)** | ✅ **原生驱动 (ARM64)** | 针对 M1/M2/M3/M4 系列芯片深度优化，NPU 极速推理 |
+| **Intel Mac (x86_64)** | ✅ **通用支持** | 标准 Swift 原生编译 |
+| **系统版本跨级升级防丢** | ✅ **永久持久化** | 采用官方 `/etc/pam.d/sudo_local`，系统更新不丢配置 |
+
+---
+
 ## 🚀 进阶演进路线 (Roadmap)
 
 1. [x] **红外硬件握手与底层驱动 (IOKit C Bridge)**

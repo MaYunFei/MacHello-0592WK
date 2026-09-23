@@ -96,48 +96,18 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
     public func togglePAMInstallation() {
         if isPAMInstalled {
-            let res = PAMManager.shared.uninstallViaGUI()
-            self.isPAMInstalled = PAMManager.shared.isInstalled
-            if !res.success, let err = res.error, !err.contains("取消") {
-                showSimpleAlert(title: "卸载 Sudo 刷脸提权失败", message: err)
+            PAMManager.shared.runUninstallInTerminal { [weak self] in
+                DispatchQueue.main.async {
+                    self?.isPAMInstalled = PAMManager.shared.isInstalled
+                    self?.objectWillChange.send()
+                }
             }
         } else {
-            let res = PAMManager.shared.installViaGUI()
-            self.isPAMInstalled = PAMManager.shared.isInstalled
-            if !res.success {
-                if res.isPermissionDenied {
-                    showPermissionDeniedGuidance()
-                } else if let err = res.error, !err.contains("取消") {
-                    showSimpleAlert(title: "配置 Sudo 刷脸提权失败", message: err)
+            PAMManager.shared.runInstallInTerminal { [weak self] in
+                DispatchQueue.main.async {
+                    self?.isPAMInstalled = PAMManager.shared.isInstalled
+                    self?.objectWillChange.send()
                 }
-            }
-        }
-    }
-
-    private func showPermissionDeniedGuidance() {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "需要完成系统 PAM 授权配置"
-            alert.informativeText = """
-            macOS 系统的完整性与隐私保护机制限制了 GUI 提权程序直接写入 /etc/pam.d 目录。
-
-            请选择您偏好的配置方式：
-            • 方式一 (最简)：点击下方按钮，系统将自动打开终端并填好安装命令，输入一次密码即可立即永久生效。
-            • 方式二：前往「系统设置 ➔ 隐私与安全性 ➔ 完全磁盘访问权限」为 MacHello 授权，即可直接在菜单中无感一键开关。
-            """
-            alert.addButton(withTitle: "自动在终端中完成 (推荐)")
-            alert.addButton(withTitle: "打开系统设置")
-            alert.addButton(withTitle: "取消")
-            let resp = alert.runModal()
-            if resp == .alertFirstButtonReturn {
-                PAMManager.shared.runInstallInTerminal { [weak self] in
-                    DispatchQueue.main.async {
-                        self?.isPAMInstalled = true
-                        self?.objectWillChange.send()
-                    }
-                }
-            } else if resp == .alertSecondButtonReturn {
-                PAMManager.shared.openFullDiskAccessSettings()
             }
         }
     }
