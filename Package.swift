@@ -27,6 +27,10 @@ let package = Package(
             name: "MacHelloAuth",
             targets: ["MacHelloAuth"]
         ),
+        .executable(
+            name: "MacHelloDarkTest",
+            targets: ["MacHelloDarkTest"]
+        ),
         .library(
             name: "MacHelloCore",
             targets: ["MacHelloCore"]
@@ -79,6 +83,11 @@ let package = Package(
             name: "MacHelloAuth",
             dependencies: ["MacHelloCore"],
             path: "Sources/MacHelloAuth"
+        ),
+        .executableTarget(
+            name: "MacHelloDarkTest",
+            dependencies: ["MacHelloCore"],
+            path: "Sources/MacHelloDarkTest"
         ),
         .testTarget(
             name: "MacHelloTests",

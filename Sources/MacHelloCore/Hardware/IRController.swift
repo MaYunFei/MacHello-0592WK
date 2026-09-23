@@ -20,6 +20,7 @@ public final class IRController {
 
     @discardableResult
     public func setMode(_ mode: Mode) -> Bool {
+        guard isConnected else { return false }
         lock.lock()
         defer { lock.unlock() }
 
@@ -34,11 +35,14 @@ public final class IRController {
 
     @discardableResult
     public func toggle() -> Bool {
+        guard isConnected else { return false }
         let newMode: Mode = (currentMode == .ir) ? .rgb : .ir
         return setMode(newMode)
     }
 
     public func resetToRGB() {
-        _ = setMode(.rgb)
+        if isConnected {
+            _ = setMode(.rgb)
+        }
     }
 }

@@ -12,7 +12,7 @@
 #define INTERFACE_NUM 0x00
 
 static int send_xu(IOUSBDeviceInterface **dev, uint8_t selector, uint8_t req_type, uint8_t req, uint8_t *data, uint16_t len) {
-    IOUSBDevRequest dev_req;
+    IOUSBDevRequestTO dev_req;
     memset(&dev_req, 0, sizeof(dev_req));
     dev_req.bmRequestType = req_type;
     dev_req.bRequest = req;
@@ -20,8 +20,10 @@ static int send_xu(IOUSBDeviceInterface **dev, uint8_t selector, uint8_t req_typ
     dev_req.wIndex = (UVC_UNIT_ID << 8) | INTERFACE_NUM;
     dev_req.wLength = len;
     dev_req.pData = data;
+    dev_req.noDataTimeout = 500;       // 500ms 超时，热插拔拔掉立刻返回，绝不死锁
+    dev_req.completionTimeout = 500;
 
-    IOReturn kr = (*dev)->DeviceRequest(dev, &dev_req);
+    IOReturn kr = (*dev)->DeviceRequestTO(dev, &dev_req);
     if (kr != kIOReturnSuccess) {
         return -1;
     }
