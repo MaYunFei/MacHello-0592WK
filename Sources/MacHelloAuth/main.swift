@@ -100,6 +100,9 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
 
     // MARK: - CameraCaptureDelegate
 
+    private var lastLitPixelBuffer: CVPixelBuffer?
+    private var pendingMatch: (score: Float, box: CGRect)?
+
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         lock.lock()
         if isFinished || isAuthenticated {
@@ -109,30 +112,56 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
         lock.unlock()
 
         frameCount += 1
-        // 核心突破：Dell 0592WK 采用 15Hz 频闪脉冲补光（偶数帧补光人脸清晰，奇数帧环境暗帧）
-        // 过滤奇数黑帧，从第 2 帧偶数补光帧起极速比对
-        if isIR && (frameCount % 2 != 0 || frameCount < 2) {
-            return
-        }
-
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        let faces = extractor.extract(from: pixelBuffer)
-        for face in faces {
-            let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
-            if match.matched {
-                AuthAuditLogger.shared.recordAuth(
-                    pixelBuffer: pixelBuffer,
-                    reason: "terminal_sudo",
-                    score: match.highestScore,
-                    success: true
+        if isIR {
+            if frameCount % 2 == 0 && frameCount >= 2 {
+                let faces = extractor.extract(from: pixelBuffer)
+                for face in faces {
+                    let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                    if match.matched {
+                        self.lastLitPixelBuffer = pixelBuffer
+                        self.pendingMatch = (match.highestScore, face.boundingBox)
+                        break
+                    }
+                }
+            } else if let lit = lastLitPixelBuffer, let pending = pendingMatch {
+                let liveness = AmbientSubtractionProcessor.shared.verifyLiveness(
+                    lit: lit,
+                    ambient: pixelBuffer,
+                    faceBoundingBox: pending.box
                 )
-                lock.lock()
-                isAuthenticated = true
-                isFinished = true
-                lock.unlock()
-                sema.signal()
-                return
+
+                if liveness.isLive {
+                    AuthAuditLogger.shared.recordAuth(
+                        pixelBuffer: lit,
+                        reason: "terminal_sudo",
+                        score: pending.score,
+                        success: true
+                    )
+                    lock.lock()
+                    isAuthenticated = true
+                    isFinished = true
+                    lock.unlock()
+                    sema.signal()
+                    return
+                } else {
+                    lastLitPixelBuffer = nil
+                    pendingMatch = nil
+                }
+            }
+        } else {
+            let faces = extractor.extract(from: pixelBuffer)
+            for face in faces {
+                let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                if match.matched {
+                    lock.lock()
+                    isAuthenticated = true
+                    isFinished = true
+                    lock.unlock()
+                    sema.signal()
+                    return
+                }
             }
         }
     }
