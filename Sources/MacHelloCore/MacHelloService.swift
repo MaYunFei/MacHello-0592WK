@@ -12,9 +12,11 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
     // 人体感应（走开息屏 / 来人亮屏）状态
     @Published public var isAutoDisplayEnabled: Bool = false
+    @Published public var requireOwnerVerification: Bool = true
     @Published public var absenceTimeout: TimeInterval = 15.0
     @Published public var isDisplayAsleep: Bool = false
     @Published public var isPersonPresent: Bool = false
+    @Published public var isOwnerVerified: Bool = false
 
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
@@ -24,13 +26,15 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public init() {
         displayManager.addObserver(self)
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
+        self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
 
-        autoDisplayService.onStateUpdated = { [weak self] isEnabled, isPresent, isDisplayAsleep in
+        autoDisplayService.onStateUpdated = { [weak self] isEnabled, isPresent, isOwner, isDisplayAsleep in
             DispatchQueue.main.async {
                 self?.isAutoDisplayEnabled = isEnabled
                 self?.isPersonPresent = isPresent
+                self?.isOwnerVerified = isOwner
                 self?.isDisplayAsleep = isDisplayAsleep
             }
         }
@@ -45,6 +49,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isEnrolled = !(profile?.samples.isEmpty ?? true)
         self.enrolledSamplesCount = profile?.samples.count ?? 0
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
+        self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.absenceTimeout = autoDisplayService.absenceTimeout
     }
 
@@ -52,6 +57,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !isAutoDisplayEnabled
         autoDisplayService.isEnabled = newState
         self.isAutoDisplayEnabled = newState
+    }
+
+    public func toggleRequireOwnerVerification() {
+        let newState = !requireOwnerVerification
+        autoDisplayService.requireOwnerVerification = newState
+        self.requireOwnerVerification = newState
     }
 
     public func setAbsenceTimeout(_ seconds: TimeInterval) {

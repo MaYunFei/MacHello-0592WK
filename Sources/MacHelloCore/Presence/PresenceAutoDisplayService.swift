@@ -8,9 +8,12 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private let captureService = CameraCaptureService.shared
     private let presenceDetector = PresenceDetector.shared
     private let displayManager = DisplayPowerManager.shared
+    private let extractor = FaceFeatureExtractor.shared
+    private let faceDb = FaceDatabase.shared
 
     private let defaultsKeyEnabled = "com.machello.autoDisplayEnabled"
     private let defaultsKeyTimeout = "com.machello.absenceTimeout"
+    private let defaultsKeyOwnerOnly = "com.machello.requireOwnerVerification"
 
     public var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: defaultsKeyEnabled) }
@@ -30,17 +33,32 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         }
     }
 
-    private var lastSeenPersonTime: Date = Date()
+    /// 是否开启机主身份专属鉴权（仅限录入的机主靠近才亮屏，防陌生人防窥）
+    public var requireOwnerVerification: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeyOwnerOnly) == nil {
+                return true // 默认开启
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeyOwnerOnly)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyOwnerOnly)
+        }
+    }
+
+    public private(set) var isOwnerVerified: Bool = false
+    public private(set) var isPersonPresent: Bool = false
+
+    private var lastSeenOwnerTime: Date = Date()
     private var absenceTimer: Timer?
     private var lastProcessedFrameTime: Date = .distantPast
     private let frameProcessingInterval: TimeInterval = 0.2 // 约 5 FPS 采样，极低 CPU 占用
 
-    public var onStateUpdated: ((_ isEnabled: Bool, _ isPresent: Bool, _ isDisplayAsleep: Bool) -> Void)?
+    public var onStateUpdated: ((_ isEnabled: Bool, _ isPresent: Bool, _ isOwner: Bool, _ isDisplayAsleep: Bool) -> Void)?
 
     private override init() {
         super.init()
         presenceDetector.delegate = self
-        // 初始若开启则恢复监控
         if isEnabled {
             startMonitoring()
         }
@@ -52,14 +70,14 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         } else {
             stopMonitoring()
         }
-        onStateUpdated?(enabled, presenceDetector.isPersonPresent, displayManager.isDisplayAsleep)
+        onStateUpdated?(enabled, isPersonPresent, isOwnerVerified, displayManager.isDisplayAsleep)
     }
 
     public func startMonitoring() {
         guard !FaceEnrollmentService.shared.isEnrolling else { return }
 
-        lastSeenPersonTime = Date()
-        presenceDetector.autoNotify = false // 避免每帧弹通知轰炸
+        lastSeenOwnerTime = Date()
+        presenceDetector.autoNotify = false
 
         if !captureService.isRunning {
             try? captureService.start(mode: .rgb)
@@ -91,13 +109,15 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private func checkAbsenceStatus() {
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
 
-        // 如果当前无人且屏幕亮着
-        if !presenceDetector.isPersonPresent && !displayManager.isDisplayAsleep {
-            let elapsed = Date().timeIntervalSince(lastSeenPersonTime)
+        let isOwnerSitting = requireOwnerVerification && faceDb.isEnrolled ? isOwnerVerified : isPersonPresent
+
+        // 如果机主不在位且屏幕当前亮着
+        if !isOwnerSitting && !displayManager.isDisplayAsleep {
+            let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
             if elapsed >= absenceTimeout {
-                // 走开息屏
+                // 走开超时，执行息屏
                 displayManager.sleepDisplay()
-                onStateUpdated?(isEnabled, false, true)
+                onStateUpdated?(isEnabled, isPersonPresent, isOwnerVerified, true)
             }
         }
     }
@@ -112,26 +132,84 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         guard now.timeIntervalSince(lastProcessedFrameTime) >= frameProcessingInterval else { return }
         lastProcessedFrameTime = now
 
-        presenceDetector.processSampleBuffer(sampleBuffer)
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        // 1. 如果启用了机主鉴权且本地已有录入数据
+        if requireOwnerVerification && faceDb.isEnrolled {
+            let faces = extractor.extract(from: pixelBuffer)
+            if faces.isEmpty {
+                handleNoPerson()
+            } else {
+                var foundOwner = false
+                var highestScore: Float = 0.0
+
+                for face in faces {
+                    let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                    if match.matched {
+                        foundOwner = true
+                        highestScore = max(highestScore, match.highestScore)
+                    }
+                }
+
+                if foundOwner {
+                    handleOwnerPresent(score: highestScore)
+                } else {
+                    handleStrangerPresent()
+                }
+            }
+        } else {
+            // 未启用或未录入时：退化为通用人脸检测
+            presenceDetector.processSampleBuffer(sampleBuffer)
+        }
     }
 
-    // MARK: - PresenceDetectorDelegate
+    private func handleOwnerPresent(score: Float) {
+        isPersonPresent = true
+        isOwnerVerified = true
+        lastSeenOwnerTime = Date()
+
+        // 如果屏幕已息屏，机主出现立刻点亮屏幕！
+        if displayManager.isDisplayAsleep {
+            displayManager.wakeDisplay()
+            onStateUpdated?(isEnabled, true, true, false)
+        } else {
+            onStateUpdated?(isEnabled, true, true, false)
+        }
+    }
+
+    private func handleStrangerPresent() {
+        isPersonPresent = true
+        isOwnerVerified = false
+
+        // 如果屏幕黑屏中，检测到陌生人则坚决保持黑屏（不调用 wakeDisplay）
+        onStateUpdated?(isEnabled, true, false, displayManager.isDisplayAsleep)
+    }
+
+    private func handleNoPerson() {
+        isPersonPresent = false
+        isOwnerVerified = false
+        onStateUpdated?(isEnabled, false, false, displayManager.isDisplayAsleep)
+    }
+
+    // MARK: - PresenceDetectorDelegate (通用回退模式)
 
     public func presenceDetector(_ detector: PresenceDetector, didChangePresence isPresent: Bool, faceCount: Int) {
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
+        guard !requireOwnerVerification || !faceDb.isEnrolled else { return }
+
+        isPersonPresent = isPresent
+        isOwnerVerified = false
 
         if isPresent {
-            lastSeenPersonTime = Date()
-            // 来人亮屏
+            lastSeenOwnerTime = Date()
             if displayManager.isDisplayAsleep {
                 displayManager.wakeDisplay()
-                onStateUpdated?(isEnabled, true, false)
+                onStateUpdated?(isEnabled, true, false, false)
             }
         } else {
-            // 人离开视野
-            lastSeenPersonTime = Date()
+            lastSeenOwnerTime = Date()
         }
 
-        onStateUpdated?(isEnabled, isPresent, displayManager.isDisplayAsleep)
+        onStateUpdated?(isEnabled, isPresent, false, displayManager.isDisplayAsleep)
     }
 }

@@ -40,8 +40,19 @@ struct MacHelloApp: App {
                 }
                 .disabled(!service.isDeviceConnected)
 
-                // 离席息屏延时设置
                 if service.isAutoDisplayEnabled {
+                    // 机主专属防窥鉴权开关
+                    Button(action: {
+                        service.toggleRequireOwnerVerification()
+                    }) {
+                        HStack {
+                            Image(systemName: service.requireOwnerVerification ? "checkmark" : "")
+                            Text(service.isEnrolled ? "仅限机主本人才亮屏 (防窥安全)" : "仅限机主本人才亮屏 (需先录入)")
+                        }
+                    }
+                    .disabled(!service.isEnrolled)
+
+                    // 离席息屏延时设置
                     Menu("离席息屏等待时长 (\(Int(service.absenceTimeout)) 秒)") {
                         Button(action: { service.setAbsenceTimeout(10) }) {
                             HStack {
@@ -71,12 +82,21 @@ struct MacHelloApp: App {
 
                     // 实时状态回显
                     HStack {
-                        Circle()
-                            .fill(service.isPersonPresent ? Color.green : Color.gray)
-                            .frame(width: 6, height: 6)
-                        Text(service.isPersonPresent ? "检测到位：有人" : "检测状态：无人")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
+                        if service.requireOwnerVerification && service.isEnrolled {
+                            if service.isOwnerVerified {
+                                Circle().fill(Color.green).frame(width: 6, height: 6)
+                                Text("状态：机主本人在位").font(.caption2).foregroundColor(.green)
+                            } else if service.isPersonPresent {
+                                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                                Text("状态：陌生人（保持黑屏）").font(.caption2).foregroundColor(.orange)
+                            } else {
+                                Circle().fill(Color.gray).frame(width: 6, height: 6)
+                                Text("状态：无人").font(.caption2).foregroundColor(.secondary)
+                            }
+                        } else {
+                            Circle().fill(service.isPersonPresent ? Color.green : Color.gray).frame(width: 6, height: 6)
+                            Text(service.isPersonPresent ? "状态：有人" : "状态：无人").font(.caption2).foregroundColor(.secondary)
+                        }
                     }
                 }
 
