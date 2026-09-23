@@ -33,10 +33,17 @@ public enum TestState: Equatable {
 final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     var onFrame: ((NSImage) -> Void)?
     var isGrayscale: Bool = false
+    var savePath: String?
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var lastUpdate: TimeInterval = 0
+    private var frameIndex = 0
+    private var bestJPEGData: Data?
 
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
+        frameIndex += 1
+        // 红外模式下跳过最初 6 帧，避免曝光爬升前期的低增益暗帧
+        if isGrayscale && frameIndex < 7 { return }
+
         let now = CACurrentMediaTime()
         // 限制在 ~15fps (约 65ms 一帧)，既丝滑生动，又绝不卡顿 UI
         guard now - lastUpdate >= 0.065 else { return }
@@ -47,9 +54,7 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
         if isGrayscale {
             if let filter = CIFilter(name: "CIColorControls") {
                 filter.setValue(ciImage, forKey: kCIInputImageKey)
-                filter.setValue(0.0, forKey: kCIInputSaturationKey)
-                filter.setValue(1.35, forKey: kCIInputContrastKey)   // 提升 35% 对比度，增强暗室人脸轮廓
-                filter.setValue(0.12, forKey: kCIInputBrightnessKey) // 提亮 12%，补偿远距离红外光衰减
+                filter.setValue(0.0, forKey: kCIInputSaturationKey) // 纯正黑白灰度夜视，不压暗阴影
                 if let out = filter.outputImage {
                     ciImage = out
                 }
@@ -62,7 +67,19 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.onFrame?(nsImage)
             }
+            // 实时保留稳态有效帧的 JPEG 数据，供测试存档查验
+            let colorSpace = CGColorSpaceCreateDeviceRGB()
+            if let data = ciContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [:]) {
+                self.bestJPEGData = data
+            }
         }
+    }
+
+    func saveSnapshot() {
+        guard let path = savePath, let data = bestJPEGData else { return }
+        let url = URL(fileURLWithPath: path)
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url)
     }
 }
 
@@ -122,6 +139,7 @@ public final class DiagnosticViewModel: ObservableObject {
             // Step 1: 测试可见光 (RGB 720P) 实时画面
             let rgbHelper = DiagnosticCaptureHelper()
             rgbHelper.isGrayscale = false
+            rgbHelper.savePath = "Tests/Snapshots/diagnostic_rgb.jpg"
             rgbHelper.onFrame = { [weak self] img in
                 self?.rgbImage = img
             }
@@ -131,7 +149,9 @@ public final class DiagnosticViewModel: ObservableObject {
                 try cameraService.start(mode: .rgb)
                 // 持续预览 2.0 秒，让画面充分曝光并让用户看到实时动态
                 Thread.sleep(forTimeInterval: 2.0)
+                cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的黑帧污染画面
                 cameraService.stop()
+                rgbHelper.saveSnapshot()
 
                 DispatchQueue.main.async {
                     self.test1State = .passed
@@ -182,6 +202,7 @@ public final class DiagnosticViewModel: ObservableObject {
             Thread.sleep(forTimeInterval: 0.4)
             let irHelper = DiagnosticCaptureHelper()
             irHelper.isGrayscale = true
+            irHelper.savePath = "Tests/Snapshots/diagnostic_ir.jpg"
             irHelper.onFrame = { [weak self] img in
                 self?.irImage = img
             }
@@ -191,7 +212,9 @@ public final class DiagnosticViewModel: ObservableObject {
                 try cameraService.start(mode: .ir)
                 // 给予 2.5 秒时间让红外夜视曝光增益充分爬升，用户可实时看到暗室被照亮的画面
                 Thread.sleep(forTimeInterval: 2.5)
+                cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的空帧/黑帧冲刷
                 cameraService.stop()
+                irHelper.saveSnapshot()
                 irController.resetToRGB()
 
                 DispatchQueue.main.async {
