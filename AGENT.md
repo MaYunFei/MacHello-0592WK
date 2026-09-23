@@ -35,6 +35,8 @@
 | **红外控制** | **IOKit (`IOUSBDeviceInterface`) 或轻量 `CIOKitHelper` C 绑定** | 直接向 USB `0bda:5767` 发送 5 步 UVC XU 控制传输 |
 | **人脸特征与活体** | **Apple Vision Framework (`VNCreateFaceprintRequest`) + CoreML** | **系统原生内置，0 外部依赖**！直接调用 Apple Silicon 统一内存与 NPU (ANE) 加速，比对仅需 5ms |
 | **电源与屏幕管理** | **`pmset displaysleepnow` + `IOPMAssertionDeclareUserActivity`** | 纯显示屏黑屏/亮屏，不影响主机 CPU 和后台进程 |
+| **键鼠活跃感知** | **`CGEventSource.secondsSinceLastEventType`** | 零开销获取系统键鼠最后活动时间，打字期间关停摄像头熄灯 |
+| **媒体观影探测** | **`IOPMCopyAssertionsStatus`** | 感知 YouTube/视频/会议电源断言，观影时相机静默、屏幕常亮 |
 
 ---
 
@@ -97,8 +99,9 @@ MacHello-0592WK/
     ├── MacHelloCore/        # 核心逻辑
     │   ├── Hardware/        # IOKit USB 5步握手
     │   ├── Capture/         # AVFoundation 摄像头采集
-    │   ├── Power/           # 屏幕息屏/亮屏电源控制 (pmset / IOPM)
-    │   ├── Presence/        # 人体存在感应 (HPD 走开息屏/机主亮屏)
+    │   ├── Power/           # 屏幕电源控制 (pmset / IOPM) 与媒体播放断言探测
+    │   ├── Input/           # 键鼠空闲时间感知 (CGEventSource)
+    │   ├── Presence/        # 人体存在感应 (HPD 走开息屏/机主亮屏/即达即关)
     │   └── Recognition/     # Apple Vision 人脸特征向量与模型持久化
     └── MacHelloPAM/         # PAM 动态链接库模块 (C / Swift)
 ```
