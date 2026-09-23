@@ -48,6 +48,8 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
             if let filter = CIFilter(name: "CIColorControls") {
                 filter.setValue(ciImage, forKey: kCIInputImageKey)
                 filter.setValue(0.0, forKey: kCIInputSaturationKey)
+                filter.setValue(1.35, forKey: kCIInputContrastKey)   // 提升 35% 对比度，增强暗室人脸轮廓
+                filter.setValue(0.12, forKey: kCIInputBrightnessKey) // 提亮 12%，补偿远距离红外光衰减
                 if let out = filter.outputImage {
                     ciImage = out
                 }

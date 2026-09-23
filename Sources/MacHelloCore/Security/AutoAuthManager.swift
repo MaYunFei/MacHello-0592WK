@@ -116,8 +116,8 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
 
         print("[AutoAuth] 检测到系统进入锁屏状态，准备触发 Face ID 解锁...")
-        // 等待锁屏 UI 动画渲染就绪 (约 500ms)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        // 等待锁屏 UI 动画渲染就绪 (约 250ms)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             self?.triggerFaceAuthForPrompt(reason: .lockScreen)
         }
     }
@@ -194,14 +194,14 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
         lastAuthSuccessTime = now
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
             guard self.isScreenLocked() else { return }
             guard let password = self.keychain.fetchPassword() else { return }
 
             print("[AutoAuth] 机主已核验，正在模拟唤醒并输入密码自动解锁进桌面...")
             self.accessibility.wakeLoginPrompt()
-            usleep(250000) // 250ms 等待输入框完全获得焦点与动画就绪
+            usleep(150000) // 150ms 等待输入框完全获得焦点与动画就绪
             self.accessibility.simulateKeystrokes(password, pressEnter: true)
             if self.isAudioFeedbackEnabled {
                 self.audio.playSuccess()
@@ -228,8 +228,8 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard isAuthenticating else { return }
 
         authFrameCount += 1
-        // 避开最初 8 帧让夜视自动曝光增益 (AGC) 充分爬升
-        if isIR && authFrameCount < 8 {
+        // 避开最初 3 帧让夜视自动曝光增益 (AGC) 稍作稳定即可立即比对
+        if isIR && authFrameCount < 4 {
             return
         }
 

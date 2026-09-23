@@ -52,26 +52,26 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
     /// 切换工作模式（RGB 彩色或 IR 红外）
     /// 注意：Dell 0592WK 红外传感器为 640x480 YUY2，RGB 传感器支持 720P。
     public func setMode(_ mode: CaptureMode) throws {
-        self.currentMode = mode
-
-        // 1. 设置硬件寄存器
-        let hwCode: UInt8 = (mode == .ir) ? 0x00 : 0x01
-        _ = dell_camera_set_mode(hwCode)
-
-        // 2. 如果正在运行，需要平滑重新配置格式
+        // 如果正在运行，必须先关停视频流，避免 Realtek ISP 在数据流中切换模式导致固件死锁或黑屏
         if isRunning {
             stop()
-            try start(mode: mode)
+            usleep(60000)
         }
+
+        self.currentMode = mode
+        let targetIrMode: IRController.Mode = (mode == .ir) ? .ir : .rgb
+        _ = IRController.shared.setMode(targetIrMode)
+
+        try start(mode: mode)
     }
 
     public func start(mode: CaptureMode = .rgb) throws {
         guard !isRunning else { return }
         self.currentMode = mode
 
-        // 先向硬件发送模式
-        let hwCode: UInt8 = (mode == .ir) ? 0x00 : 0x01
-        _ = dell_camera_set_mode(hwCode)
+        // 统一通过 IRController 进行防抖模式配置
+        let targetIrMode: IRController.Mode = (mode == .ir) ? .ir : .rgb
+        _ = IRController.shared.setMode(targetIrMode)
 
         guard let device = CameraCaptureService.findDellCamera() else {
             throw NSError(domain: "MacHello", code: 404, userInfo: [NSLocalizedDescriptionKey: "Dell 0592WK Camera not found"])
