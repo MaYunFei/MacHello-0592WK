@@ -6,6 +6,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public static let shared = PresenceAutoDisplayService()
 
     private let captureService = CameraCaptureService.shared
+    private let irController = IRController.shared
     private let presenceDetector = PresenceDetector.shared
     private let displayManager = DisplayPowerManager.shared
     private let extractor = FaceFeatureExtractor.shared
@@ -237,24 +238,27 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         } else {
             // 情况二：屏幕处于息屏黑屏状态
             if isSmartIdlePowerSavingEnabled {
-                // 间歇低频脉冲巡检：每 3 秒启动相机探测 1 秒，无人则关停，指示灯大部分时间熄灭
+                // 间歇低频脉冲巡检：每 3 秒启动红外夜视相机探测 1 秒，无人则关停，指示灯大部分时间熄灭
                 pulseCycleCounter = (pulseCycleCounter + 1) % 3
                 if pulseCycleCounter == 0 {
                     if !captureService.isRunning {
-                        try? captureService.start(mode: .rgb)
+                        _ = irController.setMode(.ir)
+                        try? captureService.start(mode: .ir)
                         captureService.delegate = self
                     }
                 } else if pulseCycleCounter == 1 {
                     // 维持检测中
                 } else {
-                    // 暂无人员靠近，关停相机以熄灭指示灯
+                    // 暂无人员靠近，关停相机并复位硬件以熄灭红外发射器与指示灯
                     if captureService.isRunning {
                         captureService.stop()
+                        irController.resetToRGB()
                     }
                 }
             } else {
                 if !captureService.isRunning {
-                    try? captureService.start(mode: .rgb)
+                    _ = irController.setMode(.ir)
+                    try? captureService.start(mode: .ir)
                     captureService.delegate = self
                 }
             }
@@ -309,6 +313,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         // 1. 如果屏幕已息屏，机主出现立刻点亮屏幕并自动解锁进桌面！
         if displayManager.isDisplayAsleep {
             displayManager.wakeDisplay()
+            irController.resetToRGB()
             emitStateChange()
             AutoAuthManager.shared.unlockScreenIfNeeded()
         } else {

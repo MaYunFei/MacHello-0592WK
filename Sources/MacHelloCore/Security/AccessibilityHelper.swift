@@ -25,7 +25,7 @@ public final class AccessibilityHelper {
         }
     }
 
-    /// 底层模拟按键序列输出（支持宽字符与多语言）
+    /// 底层模拟按键序列输出（支持宽字符与多语言，兼容 BLEUnlock/macOS 锁屏规范）
     public func simulateKeystrokes(_ string: String, pressEnter: Bool = true) {
         let src = CGEventSource(stateID: .hidSystemState)
         let chunkSize = 20
@@ -34,10 +34,9 @@ public final class AccessibilityHelper {
 
         for offset in stride(from: 0, to: uniCharCount, by: chunkSize) {
             let len = min(chunkSize, uniCharCount - offset)
-            var buffer = [UniChar]()
-            buffer.reserveCapacity(len)
-            for _ in 0..<len {
-                buffer.append(string.utf16[strIndex])
+            let buffer = UnsafeMutablePointer<UniChar>.allocate(capacity: len)
+            for i in 0..<len {
+                buffer[i] = string.utf16[strIndex]
                 strIndex = string.utf16.index(after: strIndex)
             }
 
@@ -47,17 +46,26 @@ public final class AccessibilityHelper {
 
             let releaseEvent = CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: false)
             releaseEvent?.post(tap: .cghidEventTap)
+            buffer.deallocate()
             usleep(15000) // 15ms
         }
 
         if pressEnter {
             usleep(35000) // 35ms 确保输入框内容已完全落地
 
-            // 触发 Return 回车确认键 (Virtual Key: 36 / 0x24)
-            let enterDown = CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: true)
+            // 1. 发送标准主键盘 Return 确认键 (Virtual Key: 36 / 0x24)
+            let retDown = CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: true)
+            retDown?.post(tap: .cghidEventTap)
+            usleep(15000)
+            let retUp = CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: false)
+            retUp?.post(tap: .cghidEventTap)
+
+            usleep(15000)
+            // 2. 兼容性发送数字小键盘 Enter 键 (Virtual Key: 52 / 0x34)
+            let enterDown = CGEvent(keyboardEventSource: src, virtualKey: 52, keyDown: true)
             enterDown?.post(tap: .cghidEventTap)
             usleep(15000)
-            let enterUp = CGEvent(keyboardEventSource: src, virtualKey: 36, keyDown: false)
+            let enterUp = CGEvent(keyboardEventSource: src, virtualKey: 52, keyDown: false)
             enterUp?.post(tap: .cghidEventTap)
         }
     }
@@ -68,8 +76,16 @@ public final class AccessibilityHelper {
         // Esc 键按下与抬起 (0x35)
         let escDown = CGEvent(keyboardEventSource: src, virtualKey: 0x35, keyDown: true)
         escDown?.post(tap: .cghidEventTap)
-        usleep(10000)
+        usleep(15000)
         let escUp = CGEvent(keyboardEventSource: src, virtualKey: 0x35, keyDown: false)
         escUp?.post(tap: .cghidEventTap)
+
+        usleep(25000)
+        // 空格键按下与抬起 (0x31) 确保唤起登录窗焦点
+        let spaceDown = CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: true)
+        spaceDown?.post(tap: .cghidEventTap)
+        usleep(15000)
+        let spaceUp = CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: false)
+        spaceUp?.post(tap: .cghidEventTap)
     }
 }

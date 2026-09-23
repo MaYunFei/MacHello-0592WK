@@ -16,18 +16,6 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     private let defaultsKeyLockScreenUnlock = "com.machello.isLockScreenUnlockEnabled"
     private let defaultsKeyAudioFeedback = "com.machello.isAudioFeedbackEnabled"
 
-    public var isAudioFeedbackEnabled: Bool {
-        get {
-            if UserDefaults.standard.object(forKey: defaultsKeyAudioFeedback) == nil {
-                return true
-            }
-            return UserDefaults.standard.bool(forKey: defaultsKeyAudioFeedback)
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: defaultsKeyAudioFeedback)
-        }
-    }
-
     public var isAppAuthEnabled: Bool {
         get {
             if UserDefaults.standard.object(forKey: defaultsKeyAppAuth) == nil {
@@ -52,6 +40,18 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         }
     }
 
+    public var isAudioFeedbackEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeyAudioFeedback) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeyAudioFeedback)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyAudioFeedback)
+        }
+    }
+
     private let keychain = KeychainHelper.shared
     private let accessibility = AccessibilityHelper.shared
     private let audio = AudioFeedbackHelper.shared
@@ -62,17 +62,18 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
     private let authQueue = DispatchQueue(label: "com.machello.autoauth.queue")
     private var isAuthenticating = false
+    private var currentReason: AuthReason = .adminPrompt
     private var authFrameCount = 0
     private var lastAuthSuccessTime: Date = .distantPast
 
     private override init() {
         super.init()
-        setupAppPromptObserver()
+        setupObservers()
     }
 
-    // MARK: - 监听 SecurityAgent 管理员提权弹窗
+    // MARK: - 监听 SecurityAgent 管理员提权弹窗与系统锁屏事件
 
-    private func setupAppPromptObserver() {
+    private func setupObservers() {
         let center = NSWorkspace.shared.notificationCenter
 
         center.addObserver(
@@ -88,6 +89,14 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             name: NSWorkspace.didActivateApplicationNotification,
             object: nil
         )
+
+        // 监听系统锁屏事件 (Cmd + Ctrl + Q 或屏幕超时锁定)
+        DistributedNotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenLocked),
+            name: NSNotification.Name("com.apple.screenIsLocked"),
+            object: nil
+        )
     }
 
     @objc private func handleAppLaunched(_ notification: Notification) {
@@ -96,6 +105,21 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
     @objc private func handleAppActivated(_ notification: Notification) {
         checkAndTriggerSecurityAgent(from: notification)
+    }
+
+    @objc private func handleScreenLocked() {
+        guard isLockScreenUnlockEnabled else { return }
+        guard keychain.hasPassword() else { return }
+
+        // 防抖：2秒内不重复触发
+        let now = Date()
+        guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
+
+        print("[AutoAuth] 检测到系统进入锁屏状态，准备触发 Face ID 解锁...")
+        // 等待锁屏 UI 动画渲染就绪 (约 500ms)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.triggerFaceAuthForPrompt(reason: .lockScreen)
+        }
     }
 
     private func checkAndTriggerSecurityAgent(from notification: Notification) {
@@ -110,13 +134,13 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                self?.triggerFaceAuthForPrompt()
+                self?.triggerFaceAuthForPrompt(reason: .adminPrompt)
             }
         }
     }
 
-    /// 针对管理员弹窗触发 Face ID 红外刷脸与自动填入
-    public func triggerFaceAuthForPrompt() {
+    /// 触发 Face ID 红外刷脸与自动填入 (支持管理员弹窗与锁屏解锁)
+    public func triggerFaceAuthForPrompt(reason: AuthReason = .adminPrompt) {
         authQueue.async { [weak self] in
             guard let self = self else { return }
             guard !self.isAuthenticating else { return }
@@ -130,8 +154,9 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             }
 
             self.isAuthenticating = true
+            self.currentReason = reason
             self.authFrameCount = 0
-            print("[AutoAuth] 检测到 SecurityAgent 管理员提权窗口，启动红外夜视人脸核验...")
+            print("[AutoAuth] 触发 Face ID (\(reason == .lockScreen ? "锁屏解锁" : "管理员弹窗"))，启动 850nm 红外夜视人脸核验...")
 
             // 1. 点亮 850nm 红外并启动 640x480 YUY2 红外流
             _ = self.irController.setMode(.ir)
@@ -222,6 +247,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     }
 
     private func onAuthSucceeded() {
+        let reason = currentReason
         isAuthenticating = false
         lastAuthSuccessTime = Date()
 
@@ -236,9 +262,17 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         // 从钥匙串读取解密密码并模拟输入
         guard let password = keychain.fetchPassword() else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.accessibility.simulateKeystrokes(password, pressEnter: true)
-            print("[AutoAuth] ✓ 管理员密码已自动键入并提交！")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self = self else { return }
+            if reason == .lockScreen {
+                print("[AutoAuth] ✓ 锁屏机主核验成功，模拟唤醒并键入密码解锁进桌面...")
+                self.accessibility.wakeLoginPrompt()
+                usleep(250000) // 250ms 等待输入框就绪
+                self.accessibility.simulateKeystrokes(password, pressEnter: true)
+            } else {
+                print("[AutoAuth] ✓ 管理员弹窗机主核验成功，自动键入密码提权...")
+                self.accessibility.simulateKeystrokes(password, pressEnter: true)
+            }
         }
     }
 
