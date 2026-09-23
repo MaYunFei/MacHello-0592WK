@@ -57,7 +57,8 @@
 4. [x] **机主专属亮屏与陌生人防窥拦截 (`PresenceAutoDisplayService`)**
 5. [x] **智能键鼠感知与摄像头低功耗熄灯引擎 (`InputIdleMonitor`)**
 6. [x] **媒体观影与视频会议免打扰 (`MediaActivityDetector`)**
-7. [ ] **macOS PAM 终端与锁屏刷脸秒解锁集成**
+7. [x] **macOS PAM 终端 Sudo 刷脸免密提权 (`pam_machello.so`)**
+8. [ ] **锁屏密码钥匙串自动解入桌面**
 
 ---
 
@@ -86,6 +87,13 @@ swift run MacHelloDoctor
 
 # 4. 运行仿 iPhone 面容 ID 红外录入向导
 swift run MacHelloEnroll
+
+# 5. 测试人脸秒级认证命令行
+swift run MacHelloAuth
+
+# 6. 一键安装 / 卸载终端 Sudo 刷脸提权 PAM 模块
+sudo ./scripts/install-pam.sh     # 安装生效
+sudo ./scripts/uninstall-pam.sh   # 安全还原卸载
 ```
 
 ---

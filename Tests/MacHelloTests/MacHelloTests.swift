@@ -55,6 +55,13 @@ final class MacHelloTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(idle, 0.0)
     }
 
+    func testPAMManager() {
+        let mgr = PAMManager.shared
+        XCTAssertFalse(mgr.pamSoPath.isEmpty)
+        XCTAssertFalse(mgr.authBinPath.isEmpty)
+        XCTAssertFalse(mgr.sudoLocalPath.isEmpty)
+    }
+
     func testFaceDatabaseCosineSimilarity() {
         let vecA: [Float] = [1.0, 0.0, 0.0]
         let vecB: [Float] = [1.0, 0.0, 0.0]

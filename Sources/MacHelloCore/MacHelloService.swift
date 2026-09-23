@@ -19,6 +19,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isDisplayAsleep: Bool = false
     @Published public var isPersonPresent: Bool = false
     @Published public var isOwnerVerified: Bool = false
+    @Published public var isPAMInstalled: Bool = false
 
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
@@ -57,6 +58,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let profile = FaceDatabase.shared.load()
         self.isEnrolled = !(profile?.samples.isEmpty ?? true)
         self.enrolledSamplesCount = profile?.samples.count ?? 0
+        self.isPAMInstalled = PAMManager.shared.isInstalled
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
