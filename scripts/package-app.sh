@@ -95,8 +95,15 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-# 代码签名（使用本地自签名，保证权限体系正常加载与稳定的权限缓存）
-codesign --force --deep --sign - --identifier "com.machello.app" "$APP_DIR" > /dev/null 2>&1 || true
+# 代码签名（优先使用本机已有的 Apple Development 开发者签名，彻底避免钥匙串每次重新询问）
+SIGN_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development" | head -n 1 | awk -F '"' '{print $2}')
+if [ -n "$SIGN_IDENTITY" ]; then
+    echo "🔏 正在使用苹果官方开发者证书签名: $SIGN_IDENTITY ..."
+    codesign --force --deep --sign "$SIGN_IDENTITY" --identifier "com.machello.app" "$APP_DIR"
+else
+    echo "🔏 使用本地稳定签名..."
+    codesign --force --deep --sign - --identifier "com.machello.app" "$APP_DIR"
+fi
 
 echo "✅ [5/5] 打包成功: $APP_DIR"
 
