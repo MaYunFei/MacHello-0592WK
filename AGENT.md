@@ -88,6 +88,17 @@
    - 禁止在相机每一帧回调中修改 `@Published` 属性，必须使用差分比对（仅当状态发生布尔反转或实际改变时才发射事件），防止 macOS `NSMenu` 子菜单发生高频销毁与闪烁。
 3. **免密提权防死锁**：
    - PAM 模块若在 3 秒内未比对到人脸或发生摄像头异常，必须立即返回 `PAM_AUTH_ERR` 并退回到原生密码输入，严禁卡死系统终端。
+4. **macOS 15 Sequoia 锁屏按键注入与安全时序规范 (Lock Screen Timing Guard)**：
+   - **锁屏动效避让 (1.2s)**：macOS 锁屏（`Cmd + Ctrl + Q`）有约 800ms~1000ms 的动画转场。在此期间 `loginwindow` 不接受按键输入。必须等待 1.2 秒后才执行识别与按键注入，防止按键掉入动画黑洞；
+   - **严禁使用 `Esc`**：Sonoma/Sequoia 锁屏下，按 `Esc` 会把密码框收起隐藏。唤醒密码框应使用安全的 `Shift` (0x38) 激活，配合 `Cmd+A` 与 `Delete` 清理旧输入；
+   - **必须注入纳秒绝对时戳**：macOS 15 对 `CGEvent` 施加了严格校验，每个模拟按键必须附加 `clock_gettime_nsec_np(CLOCK_UPTIME_RAW)`，否则会被系统 WindowServer 静默丢弃；
+   - **双键回车落地**：模拟发送主键盘 Return (`0x24`) 与 Enter (`0x34`) 确保各布局均能触发登录。
+5. **规范化存储目录架构 (Zero Pollution Guard)**：
+   - 严禁将调试抓图或历史数据写入源码目录或硬编码开发者个人路径；
+   - 严格统一存储在用户主目录 `~/.machello/`：
+     - 人脸模型库：`~/.machello/faces.json`
+     - 通行审计日志与抓拍：`~/.machello/history/`（滚动最多 50 张）
+     - 硬件自检与诊断输出：`~/.machello/diagnostics/`
 
 ---
 
@@ -101,14 +112,15 @@ MacHello-0592WK/
 └── Sources/
     ├── MacHello/            # App 入口与菜单栏界面 (SwiftUI / AppKit)
     │   ├── MacHelloApp.swift
-    │   ├── Controllers/     # 窗口控制器
-    │   └── Views/           # 录入引导环形界面
+    │   ├── Controllers/     # 窗口控制器 (向导/录入/自检/审计历史)
+    │   └── Views/           # SwiftUI 界面 (录入环形向导/双目自检/通行审计历史)
     ├── MacHelloCore/        # 核心逻辑
     │   ├── Hardware/        # IOKit USB 5步握手
-    │   ├── Capture/         # AVFoundation 摄像头采集
+    │   ├── Capture/         # AVFoundation 摄像头采集 (RGB 720P / IR 640x480)
     │   ├── Power/           # 屏幕电源控制 (pmset / IOPM) 与媒体播放断言探测
     │   ├── Input/           # 键鼠空闲时间感知 (CGEventSource)
     │   ├── Presence/        # 人体存在感应 (HPD 走开息屏/机主亮屏/即达即关)
-    │   └── Recognition/     # Apple Vision 人脸特征向量与模型持久化
+    │   ├── Recognition/     # Apple Vision 人脸特征向量、环境光差分与15Hz频闪活体防伪
+    │   └── Security/        # 全场景 Face ID (钥匙串/辅助功能按键/提示音/通行审计中心)
     └── MacHelloPAM/         # PAM 动态链接库模块 (C / Swift)
 ```
