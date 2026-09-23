@@ -9,7 +9,7 @@ struct MacHelloApp: App {
     var body: some Scene {
         MenuBarExtra("MacHello", systemImage: service.isDeviceConnected ? "faceid" : "person.crop.circle.badge.exclamationmark") {
             VStack(alignment: .leading, spacing: 6) {
-                // 设备连接状态指示
+                // 设备连接状态
                 HStack {
                     Circle()
                         .fill(service.isDeviceConnected ? Color.green : Color.red)
@@ -29,7 +29,60 @@ struct MacHelloApp: App {
 
                 Divider()
 
-                // 核心功能：打开面容录入窗口 (带实时红外预览与引导)
+                // 人体感应开关 (走开息屏 / 来人亮屏)
+                Button(action: {
+                    service.toggleAutoDisplay()
+                }) {
+                    HStack {
+                        Image(systemName: service.isAutoDisplayEnabled ? "checkmark" : "")
+                        Text("人体感应（走开息屏 / 来人亮屏）")
+                    }
+                }
+                .disabled(!service.isDeviceConnected)
+
+                // 离席息屏延时设置
+                if service.isAutoDisplayEnabled {
+                    Menu("离席息屏等待时长 (\(Int(service.absenceTimeout)) 秒)") {
+                        Button(action: { service.setAbsenceTimeout(10) }) {
+                            HStack {
+                                if service.absenceTimeout == 10 { Image(systemName: "checkmark") }
+                                Text("10 秒 (极速体验)")
+                            }
+                        }
+                        Button(action: { service.setAbsenceTimeout(15) }) {
+                            HStack {
+                                if service.absenceTimeout == 15 { Image(systemName: "checkmark") }
+                                Text("15 秒 (测试推荐)")
+                            }
+                        }
+                        Button(action: { service.setAbsenceTimeout(30) }) {
+                            HStack {
+                                if service.absenceTimeout == 30 { Image(systemName: "checkmark") }
+                                Text("30 秒 (日常推荐)")
+                            }
+                        }
+                        Button(action: { service.setAbsenceTimeout(60) }) {
+                            HStack {
+                                if service.absenceTimeout == 60 { Image(systemName: "checkmark") }
+                                Text("1 分钟")
+                            }
+                        }
+                    }
+
+                    // 实时状态回显
+                    HStack {
+                        Circle()
+                            .fill(service.isPersonPresent ? Color.green : Color.gray)
+                            .frame(width: 6, height: 6)
+                        Text(service.isPersonPresent ? "检测到位：有人" : "检测状态：无人")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Divider()
+
+                // 打开面容录入窗口 (带实时红外预览与引导)
                 Button(action: {
                     service.refreshStatus()
                     EnrollmentWindowController.shared.showWindow()

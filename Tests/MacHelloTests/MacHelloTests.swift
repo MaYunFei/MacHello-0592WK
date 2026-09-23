@@ -63,4 +63,18 @@ final class MacHelloTests: XCTestCase {
         let simOrth = FaceDatabase.cosineSimilarity(a: vecA, b: vecC)
         XCTAssertEqual(simOrth, 0.0, accuracy: 0.001)
     }
+
+    func testDisplayPowerManagerObserver() {
+        class MockObserver: DisplayPowerObserver {
+            var stateChanged = false
+            func displayPowerStateDidChange(isDisplayAsleep: Bool) {
+                stateChanged = true
+            }
+        }
+
+        let mgr = DisplayPowerManager.shared
+        let obs = MockObserver()
+        mgr.addObserver(obs)
+        XCTAssertFalse(obs.stateChanged)
+    }
 }
