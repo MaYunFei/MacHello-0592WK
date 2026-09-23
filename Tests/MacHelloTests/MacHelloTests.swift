@@ -77,34 +77,4 @@ final class MacHelloTests: XCTestCase {
         mgr.addObserver(obs)
         XCTAssertFalse(obs.stateChanged)
     }
-
-    func testHandGestureDetectorInit() {
-        let detector = HandGestureDetector.shared
-        XCTAssertNotNil(detector)
-
-        // Verify all gesture types exist
-        let allTypes = HandGestureType.allCases
-        XCTAssertTrue(allTypes.contains(.openPalm))
-        XCTAssertTrue(allTypes.contains(.indexFingerUp))
-        XCTAssertTrue(allTypes.contains(.fist))
-        XCTAssertTrue(allTypes.contains(.victory))
-        XCTAssertTrue(allTypes.contains(.thumbsUp))
-        XCTAssertTrue(allTypes.contains(.fingerHeart))
-        XCTAssertTrue(allTypes.contains(.swipeLeft))
-        XCTAssertTrue(allTypes.contains(.swipeRight))
-    }
-
-    func testGestureConfigManagerDefaults() {
-        let config = GestureConfigManager.shared
-        let palmRule = config.rule(for: .openPalm)
-        XCTAssertEqual(palmRule.action, .sleepDisplay)
-
-        let fistRule = config.rule(for: .fist)
-        XCTAssertEqual(fistRule.action, .mediaPlayPause)
-    }
-
-    func testInputIdleMonitor() {
-        let idle = InputIdleMonitor.shared.idleSeconds
-        XCTAssertGreaterThanOrEqual(idle, 0.0)
-    }
 }

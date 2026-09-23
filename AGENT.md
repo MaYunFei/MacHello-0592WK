@@ -35,8 +35,6 @@
 | **红外控制** | **IOKit (`IOUSBDeviceInterface`) 或轻量 `CIOKitHelper` C 绑定** | 直接向 USB `0bda:5767` 发送 5 步 UVC XU 控制传输 |
 | **人脸特征与活体** | **Apple Vision Framework (`VNCreateFaceprintRequest`) + CoreML** | **系统原生内置，0 外部依赖**！直接调用 Apple Silicon 统一内存与 NPU (ANE) 加速，比对仅需 5ms |
 | **电源与屏幕管理** | **`pmset displaysleepnow` + `IOPMAssertionDeclareUserActivity`** | 纯显示屏黑屏/亮屏，不影响主机 CPU 和后台进程 |
-| **空闲事件检测** | **`CGEventSource.secondsSinceLastEventType`** | 0 开销获取系统键鼠最后输入时间 |
-| **隔空手势** | **Apple Vision (`VNDetectHumanHandPoseRequest`)** | 21 点手部骨骼检测，实现挥手秒锁屏、隔空静音等 |
 
 ---
 
@@ -100,8 +98,7 @@ MacHello-0592WK/
     │   ├── Hardware/        # IOKit USB 5步握手
     │   ├── Capture/         # AVFoundation 摄像头采集
     │   ├── Power/           # 屏幕息屏/亮屏电源控制 (pmset / IOPM)
-    │   ├── Presence/        # 人体存在感应与键鼠空闲调度
-    │   ├── Gestures/        # Apple Vision 21 点手部手势交互 (规划中)
+    │   ├── Presence/        # 人体存在感应 (HPD 走开息屏/机主亮屏)
     │   └── Recognition/     # Apple Vision 人脸特征向量与模型持久化
     └── MacHelloPAM/         # PAM 动态链接库模块 (C / Swift)
 ```

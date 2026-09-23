@@ -138,11 +138,6 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        // 2. 如果屏幕处于点亮状态且开启了隔空手势，进行手势识别处理
-        if GestureActionManager.shared.isEnabled && !displayManager.isDisplayAsleep {
-            HandGestureDetector.shared.process(pixelBuffer: pixelBuffer)
-        }
-
         // 1. 如果启用了机主鉴权且本地已有录入数据
         if requireOwnerVerification && faceDb.isEnrolled {
             let faces = extractor.extract(from: pixelBuffer)
