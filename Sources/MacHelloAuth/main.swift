@@ -109,8 +109,9 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
         lock.unlock()
 
         frameCount += 1
-        // IR 模式下，前 8 帧让传感器夜视自动曝光增益 (AEC/AGC) 充分升起，避开启动初始的黑帧
-        if isIR && frameCount < 8 {
+        // 核心突破：Dell 0592WK 采用 15Hz 频闪脉冲补光（偶数帧补光人脸清晰，奇数帧环境暗帧）
+        // 过滤奇数黑帧，从第 2 帧偶数补光帧起极速比对
+        if isIR && (frameCount % 2 != 0 || frameCount < 2) {
             return
         }
 

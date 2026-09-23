@@ -237,8 +237,10 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard isAuthenticating else { return }
 
         authFrameCount += 1
-        // 避开最初 3 帧让夜视自动曝光增益 (AGC) 稍作稳定即可立即比对
-        if isIR && authFrameCount < 4 {
+        // 核心突破：Dell 0592WK 硬件采用 Windows Hello 规范的 15Hz 交替频闪曝光（Interleaved Strobe）
+        // 奇数帧为无补光的环境帧（暗室下全黑），偶数帧为 850nm 满血补光帧（人脸极清晰）
+        // 因此直接过滤掉无补光的奇数帧与第 1 帧初始化帧，从第 2 帧起毫秒级精准秒核验！
+        if isIR && (authFrameCount % 2 != 0 || authFrameCount < 2) {
             return
         }
 
