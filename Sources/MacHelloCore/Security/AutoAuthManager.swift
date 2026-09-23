@@ -99,6 +99,13 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             object: nil
         )
 
+        center.addObserver(
+            self,
+            selector: #selector(handleScreensDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+
         // 监听系统锁屏事件 (Cmd + Ctrl + Q 或屏幕超时锁定)
         DistributedNotificationCenter.default.addObserver(
             self,
@@ -106,6 +113,20 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             name: NSNotification.Name("com.apple.screenIsLocked"),
             object: nil
         )
+    }
+
+    @objc private func handleScreensDidWake() {
+        guard isLockScreenUnlockEnabled else { return }
+        guard keychain.hasPassword() else { return }
+        guard isScreenLocked() else { return }
+
+        let now = Date()
+        guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
+
+        print("[AutoAuth] 屏幕唤醒且处于锁定状态，触发 Face ID 自动解锁...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.triggerFaceAuthForPrompt(reason: .lockScreen)
+        }
     }
 
     @objc private func handleAppLaunched(_ notification: Notification) {
@@ -124,10 +145,14 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         let now = Date()
         guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
 
-        print("[AutoAuth] 检测到系统进入锁屏状态，准备触发 Face ID 解锁...")
-        // 等待锁屏 UI 动画渲染就绪 (约 250ms)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.triggerFaceAuthForPrompt(reason: .lockScreen)
+        print("[AutoAuth] 检测到系统进入锁屏状态，等待系统锁屏动效落地 (1.2s)...")
+        // 关键：macOS 锁屏切换动画耗时约 800ms~1000ms，期间 loginwindow 不接收按键事件
+        // 等待 1.2 秒动效彻底落定后，再开启红外核验，避免按键事件丢失！
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self = self else { return }
+            if self.isScreenLocked() {
+                self.triggerFaceAuthForPrompt(reason: .lockScreen)
+            }
         }
     }
 
@@ -311,12 +336,12 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         // 从钥匙串读取解密密码并模拟输入
         guard let password = keychain.fetchPassword() else { return }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self = self else { return }
             if reason == .lockScreen {
-                print("[AutoAuth] ✓ 锁屏机主核验成功，模拟唤醒并键入密码解锁进桌面...")
+                print("[AutoAuth] ✓ 锁屏机主核验成功，激活输入框并键入密码解锁进桌面...")
                 self.accessibility.wakeLoginPrompt()
-                usleep(300000) // 300ms 等待锁屏 Esc 响应并聚焦密码输入框
+                usleep(250000) // 250ms 等待输入框清理与就绪
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
             } else {
                 print("[AutoAuth] ✓ 管理员弹窗机主核验成功，自动键入密码提权...")
