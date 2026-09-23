@@ -27,7 +27,7 @@ public final class DiagnosticWindowController: NSObject, NSWindowDelegate {
         let hostingController = NSHostingController(rootView: diagnosticView)
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 530),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 680),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false

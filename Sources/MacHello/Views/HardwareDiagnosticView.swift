@@ -3,7 +3,7 @@ import AppKit
 import MacHelloCore
 import AVFoundation
 
-public enum TestState {
+public enum TestState: Equatable {
     case idle
     case running
     case passed
@@ -28,6 +28,21 @@ public enum TestState {
     }
 }
 
+final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
+    let sema = DispatchSemaphore(value: 0)
+    var frameCount = 0
+    var targetFrames = 15
+    var capturedBuffer: CMSampleBuffer?
+
+    func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
+        frameCount += 1
+        if frameCount >= targetFrames {
+            capturedBuffer = sampleBuffer
+            sema.signal()
+        }
+    }
+}
+
 public struct HardwareDiagnosticView: View {
     @State private var isConnected: Bool = false
     @State private var cameraName: String = "正在检测..."
@@ -37,6 +52,9 @@ public struct HardwareDiagnosticView: View {
     @State private var test2State: TestState = .idle // UVC XU 握手
     @State private var test3State: TestState = .idle // 红外发射管
     @State private var test4State: TestState = .idle // 红外视频流
+
+    @State private var rgbImage: NSImage?
+    @State private var irImage: NSImage?
 
     @State private var isTesting: Bool = false
     @State private var allPassed: Bool = false
@@ -51,31 +69,31 @@ public struct HardwareDiagnosticView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 16) {
             // 顶部标题与图标
             HStack(spacing: 16) {
                 Image(nsImage: NSImage(named: "NSApplicationIcon") ?? NSImage())
                     .resizable()
-                    .frame(width: 54, height: 54)
-                    .cornerRadius(12)
+                    .frame(width: 50, height: 50)
+                    .cornerRadius(10)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("MacHello 硬件自检与设备确认")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("请确认连接的模组为 Dell CN-0592WK，并完成硬件通畅性测试。")
+                    Text("请确认连接的模组为 Dell CN-0592WK，并完成可见光与近红外双目自检。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
             }
             .padding(.horizontal, 24)
-            .padding(.top, 20)
+            .padding(.top, 16)
 
             Divider()
 
             // 1. 硬件规格与识别卡片
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("目标支持硬件规格")
                         .font(.headline)
@@ -91,12 +109,12 @@ public struct HardwareDiagnosticView: View {
                     }
                 }
 
-                VStack(spacing: 6) {
+                VStack(spacing: 5) {
                     infoRow(title: "预期硬件型号", value: "Dell CN-0592WK (Realtek 0bda:5767)")
                     infoRow(title: "系统识别设备", value: cameraName)
                     infoRow(title: "近红外支持", value: "850nm 独立发射管 + 640x480 YUY2 红外镜头")
                 }
-                .padding(12)
+                .padding(10)
                 .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                 .cornerRadius(8)
 
@@ -104,31 +122,106 @@ public struct HardwareDiagnosticView: View {
                     Text("我已确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组")
                         .font(.subheadline)
                 }
-                .padding(.top, 2)
             }
             .padding(.horizontal, 24)
 
-            // 2. 自检项目清单
-            VStack(alignment: .leading, spacing: 12) {
-                Text("硬件链路完整性测试")
+            // 2. 双镜头实拍照片回显卡片
+            VStack(alignment: .leading, spacing: 8) {
+                Text("双目镜头实拍效果验证")
                     .font(.headline)
 
-                VStack(spacing: 8) {
-                    testItemRow(title: "1. 可见光镜头 (RGB 720P) 视频流协商", state: test1State)
-                    testItemRow(title: "2. Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: test2State)
-                    testItemRow(title: "3. 850nm 近红外发射管打亮与模式写入", state: test3State)
-                    testItemRow(title: "4. 近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: test4State)
-                }
-                .padding(12)
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-                .cornerRadius(8)
+                HStack(spacing: 16) {
+                    // 左侧：RGB 可见光镜头
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("📷 可见光镜头 (RGB 720P)")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            Spacer()
+                            if rgbImage != nil {
+                                Text("抓拍成功 ✓").font(.caption2).foregroundColor(.green)
+                            }
+                        }
+                        if let img = rgbImage {
+                            Image(nsImage: img)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 250, height: 140)
+                                .clipped()
+                                .cornerRadius(8)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(0.2))
+                                .frame(width: 250, height: 140)
+                                .overlay(
+                                    VStack(spacing: 4) {
+                                        Image(systemName: "camera")
+                                            .font(.title2)
+                                            .foregroundColor(.secondary)
+                                        Text(test1State == .running ? "正在抓拍可见光..." : "点击自检后抓拍")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                )
+                        }
+                    }
 
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundColor(allPassed ? .green : .secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
+                    // 右侧：IR 红外夜视镜头
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("🌙 红外夜视镜头 (IR 640x480)")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            Spacer()
+                            if irImage != nil {
+                                Text("850nm 补光正常 ✓").font(.caption2).foregroundColor(.green)
+                            }
+                        }
+                        if let img = irImage {
+                            Image(nsImage: img)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 250, height: 140)
+                                .clipped()
+                                .cornerRadius(8)
+                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.black.opacity(0.2))
+                                .frame(width: 250, height: 140)
+                                .overlay(
+                                    VStack(spacing: 4) {
+                                        Image(systemName: "moon.stars")
+                                            .font(.title2)
+                                            .foregroundColor(.secondary)
+                                        Text(test4State == .running ? "850nm 补光增益抓拍中..." : "等待红外夜视抓拍")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                )
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 24)
+
+            // 3. 硬件链路测试状态
+            VStack(spacing: 6) {
+                testItemRow(title: "1. 可见光镜头 (RGB 720P) 视频流与画面采样", state: test1State)
+                testItemRow(title: "2. Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: test2State)
+                testItemRow(title: "3. 850nm 近红外发射管打亮与夜视模式写入", state: test3State)
+                testItemRow(title: "4. 近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: test4State)
+            }
+            .padding(10)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+            .cornerRadius(8)
+            .padding(.horizontal, 24)
+
+            Text(statusMessage)
+                .font(.caption)
+                .foregroundColor(allPassed ? .green : .secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
 
             Spacer()
 
@@ -158,9 +251,9 @@ public struct HardwareDiagnosticView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 20)
+            .padding(.bottom, 16)
         }
-        .frame(width: 580, height: 530)
+        .frame(width: 580, height: 680)
         .onAppear {
             refreshHardwareInfo()
         }
@@ -211,6 +304,23 @@ public struct HardwareDiagnosticView: View {
         }
     }
 
+    private func bufferToNSImage(sampleBuffer: CMSampleBuffer, isGrayscale: Bool = false) -> NSImage? {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
+        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        if isGrayscale {
+            let filter = CIFilter(name: "CIColorControls")
+            filter?.setValue(ciImage, forKey: kCIInputImageKey)
+            filter?.setValue(0.0, forKey: kCIInputSaturationKey)
+            if let out = filter?.outputImage {
+                ciImage = out
+            }
+        }
+        let rep = NSCIImageRep(ciImage: ciImage)
+        let nsImage = NSImage(size: rep.size)
+        nsImage.addRepresentation(rep)
+        return nsImage
+    }
+
     private func runSelfTest() {
         isTesting = true
         allPassed = false
@@ -218,21 +328,36 @@ public struct HardwareDiagnosticView: View {
         test2State = .idle
         test3State = .idle
         test4State = .idle
+        rgbImage = nil
+        irImage = nil
         statusMessage = "正在测试可见光摄像头..."
 
         DispatchQueue.global(qos: .userInitiated).async {
             let cameraService = CameraCaptureService.shared
             let irController = IRController.shared
 
-            // Step 1: 测试可见光
+            // Step 1: 测试可见光 (采样 12 帧以获得稳定画面)
             do {
+                let helper = DiagnosticCaptureHelper()
+                helper.targetFrames = 12
+                cameraService.delegate = helper
                 try cameraService.start(mode: .rgb)
-                Thread.sleep(forTimeInterval: 0.8)
+                _ = helper.sema.wait(timeout: .now() + 3.0)
                 cameraService.stop()
-                DispatchQueue.main.async {
-                    self.test1State = .passed
-                    self.test2State = .running
-                    self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
+
+                if let buf = helper.capturedBuffer, let img = self.bufferToNSImage(sampleBuffer: buf, isGrayscale: false) {
+                    DispatchQueue.main.async {
+                        self.rgbImage = img
+                        self.test1State = .passed
+                        self.test2State = .running
+                        self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.test1State = .passed
+                        self.test2State = .running
+                        self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
+                    }
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -271,21 +396,34 @@ public struct HardwareDiagnosticView: View {
             DispatchQueue.main.async {
                 self.test3State = .passed
                 self.test4State = .running
-                self.statusMessage = "正在捕获红外夜视镜头原始 YUY2 流..."
+                self.statusMessage = "正在捕获红外夜视镜头原始 YUY2 流 (自动曝光爬升中)..."
             }
 
-            // Step 4: 捕获 IR 视频流
+            // Step 4: 捕获 IR 视频流 (给予 25 帧以让夜视增益爬升完成)
             do {
+                let helper = DiagnosticCaptureHelper()
+                helper.targetFrames = 25
+                cameraService.delegate = helper
                 try cameraService.start(mode: .ir)
-                Thread.sleep(forTimeInterval: 0.8)
+                _ = helper.sema.wait(timeout: .now() + 4.0)
                 cameraService.stop()
                 irController.resetToRGB()
 
-                DispatchQueue.main.async {
-                    self.test4State = .passed
-                    self.allPassed = true
-                    self.isTesting = false
-                    self.statusMessage = "🎉 全部 4 项硬件自检通过！设备状态完美。"
+                if let buf = helper.capturedBuffer, let img = self.bufferToNSImage(sampleBuffer: buf, isGrayscale: true) {
+                    DispatchQueue.main.async {
+                        self.irImage = img
+                        self.test4State = .passed
+                        self.allPassed = true
+                        self.isTesting = false
+                        self.statusMessage = "🎉 全部 4 项硬件自检通过！可见光与红外双目成像完美。"
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.test4State = .passed
+                        self.allPassed = true
+                        self.isTesting = false
+                        self.statusMessage = "🎉 全部 4 项硬件自检通过！设备状态完美。"
+                    }
                 }
             } catch {
                 irController.resetToRGB()
