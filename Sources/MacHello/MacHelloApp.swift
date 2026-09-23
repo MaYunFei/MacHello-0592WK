@@ -112,14 +112,19 @@ struct MacHelloApp: App {
 
                 // 4. 终端 Sudo 刷脸免密提权
                 Divider()
-                if service.isPAMInstalled {
-                    Text("✓ 终端 Sudo 刷脸提权已启用").font(.caption).foregroundColor(.green)
-                } else {
-                    Button(action: {
-                        showPAMDialog()
-                    }) {
-                        Label("配置终端 Sudo 刷脸免密提权...", systemImage: "terminal")
-                    }
+                Button(action: {
+                    service.togglePAMInstallation()
+                }) {
+                    let prefix = service.isPAMInstalled ? "✓ " : "   "
+                    Text(prefix + (service.isPAMInstalled ? "终端 Sudo 刷脸免密提权 (已启用·点击卸载)" : "终端 Sudo 刷脸免密提权 (点击一键配置)"))
+                }
+
+                // 5. 开机自启动
+                Button(action: {
+                    service.toggleLaunchAtLogin()
+                }) {
+                    let prefix = service.isLaunchAtLoginEnabled ? "✓ " : "   "
+                    Text(prefix + "登录时自动启动 (开机自启)")
                 }
 
                 Divider()
@@ -142,24 +147,5 @@ struct MacHelloApp: App {
             .padding(4)
         }
         .menuBarExtraStyle(.menu)
-    }
-
-    private func showPAMDialog() {
-        let alert = NSAlert()
-        alert.messageText = "配置终端 Sudo 刷脸免密提权"
-        alert.informativeText = """
-        MacHello 原生支持在 macOS 终端 (Terminal, iTerm2, VSCode) 执行 sudo 时通过硬件红外秒速刷脸提权。
-
-        请在终端项目根目录下运行以下命令完成安装：
-        sudo ./scripts/install-pam.sh
-
-        (如需卸载可运行: sudo ./scripts/uninstall-pam.sh)
-        """
-        alert.addButton(withTitle: "复制安装命令")
-        alert.addButton(withTitle: "关闭")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString("sudo ./scripts/install-pam.sh", forType: .string)
-        }
     }
 }

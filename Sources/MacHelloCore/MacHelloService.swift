@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import CIOKitHelper
+import ServiceManagement
 
 public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public static let shared = MacHelloService()
@@ -20,6 +21,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isPersonPresent: Bool = false
     @Published public var isOwnerVerified: Bool = false
     @Published public var isPAMInstalled: Bool = false
+    @Published public var isLaunchAtLoginEnabled: Bool = false
 
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
@@ -59,6 +61,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isEnrolled = !(profile?.samples.isEmpty ?? true)
         self.enrolledSamplesCount = profile?.samples.count ?? 0
         self.isPAMInstalled = PAMManager.shared.isInstalled
+        self.isLaunchAtLoginEnabled = checkLaunchAtLoginStatus()
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
@@ -88,6 +91,43 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !requireOwnerVerification
         autoDisplayService.requireOwnerVerification = newState
         self.requireOwnerVerification = newState
+    }
+
+    public func togglePAMInstallation() {
+        if isPAMInstalled {
+            let res = PAMManager.shared.uninstallViaGUI()
+            if res.success {
+                self.isPAMInstalled = false
+            }
+        } else {
+            let res = PAMManager.shared.installViaGUI()
+            if res.success {
+                self.isPAMInstalled = true
+            }
+        }
+    }
+
+    private func checkLaunchAtLoginStatus() -> Bool {
+        if #available(macOS 13.0, *) {
+            return SMAppService.mainApp.status == .enabled
+        }
+        return false
+    }
+
+    public func toggleLaunchAtLogin() {
+        if #available(macOS 13.0, *) {
+            do {
+                if SMAppService.mainApp.status == .enabled {
+                    try SMAppService.mainApp.unregister()
+                    self.isLaunchAtLoginEnabled = false
+                } else {
+                    try SMAppService.mainApp.register()
+                    self.isLaunchAtLoginEnabled = true
+                }
+            } catch {
+                print("Failed to toggle launch at login:", error)
+            }
+        }
     }
 
     public func setAbsenceTimeout(_ seconds: TimeInterval) {

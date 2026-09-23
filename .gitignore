@@ -1,5 +1,6 @@
 # Swift / Xcode Build Outputs
 .build/
+dist/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
