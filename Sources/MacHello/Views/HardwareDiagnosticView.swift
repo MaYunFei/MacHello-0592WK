@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import MacHelloCore
 import AVFoundation
+import CoreMedia
+import CoreImage
 
 public enum TestState: Equatable {
     case idle
@@ -29,36 +31,187 @@ public enum TestState: Equatable {
 }
 
 final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
-    let sema = DispatchSemaphore(value: 0)
-    var frameCount = 0
-    var targetFrames = 15
-    var capturedBuffer: CMSampleBuffer?
+    var onFrame: ((NSImage) -> Void)?
+    var isGrayscale: Bool = false
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    private var lastUpdate: TimeInterval = 0
 
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
-        frameCount += 1
-        if frameCount >= targetFrames {
-            capturedBuffer = sampleBuffer
-            sema.signal()
+        let now = CACurrentMediaTime()
+        // 限制在 ~15fps (约 65ms 一帧)，既丝滑生动，又绝不卡顿 UI
+        guard now - lastUpdate >= 0.065 else { return }
+        lastUpdate = now
+
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        if isGrayscale {
+            if let filter = CIFilter(name: "CIColorControls") {
+                filter.setValue(ciImage, forKey: kCIInputImageKey)
+                filter.setValue(0.0, forKey: kCIInputSaturationKey)
+                if let out = filter.outputImage {
+                    ciImage = out
+                }
+            }
+        }
+
+        // 使用 GPU/Metal 立即渲染成独立不可变的 CGImage，绝不依赖 AVFoundation 内部缓冲区生命周期
+        if let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) {
+            let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            DispatchQueue.main.async { [weak self] in
+                self?.onFrame?(nsImage)
+            }
+        }
+    }
+}
+
+public final class DiagnosticViewModel: ObservableObject {
+    @Published public var isConnected: Bool = false
+    @Published public var cameraName: String = "正在检测..."
+    @Published public var hardwareConfirmed: Bool = false
+
+    @Published public var test1State: TestState = .idle
+    @Published public var test2State: TestState = .idle
+    @Published public var test3State: TestState = .idle
+    @Published public var test4State: TestState = .idle
+
+    @Published public var rgbImage: NSImage?
+    @Published public var irImage: NSImage?
+
+    @Published public var isTesting: Bool = false
+    @Published public var allPassed: Bool = false
+    @Published public var statusMessage: String = "点击下方按钮开始全面的硬件链路自检"
+
+    public init() {
+        refreshHardwareInfo()
+    }
+
+    public func refreshHardwareInfo() {
+        self.isConnected = IRController.shared.isConnected
+        if let dev = AVCaptureDevice.default(for: .video) {
+            self.cameraName = "\(dev.localizedName) (\(dev.modelID))"
+        } else {
+            self.cameraName = "未找到可用视频设备"
+        }
+        if self.isConnected {
+            self.hardwareConfirmed = true
+        }
+    }
+
+    public func runSelfTest() {
+        isTesting = true
+        allPassed = false
+        test1State = .running
+        test2State = .idle
+        test3State = .idle
+        test4State = .idle
+        rgbImage = nil
+        irImage = nil
+        statusMessage = "正在连接可见光镜头并拉取实时画面..."
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let cameraService = CameraCaptureService.shared
+            let irController = IRController.shared
+
+            // 先确保摄像头停止，处于干净准备状态
+            cameraService.stop()
+            Thread.sleep(forTimeInterval: 0.25)
+
+            // Step 1: 测试可见光 (RGB 720P) 实时画面
+            let rgbHelper = DiagnosticCaptureHelper()
+            rgbHelper.isGrayscale = false
+            rgbHelper.onFrame = { [weak self] img in
+                self?.rgbImage = img
+            }
+            cameraService.delegate = rgbHelper
+
+            do {
+                try cameraService.start(mode: .rgb)
+                // 持续预览 2.0 秒，让画面充分曝光并让用户看到实时动态
+                Thread.sleep(forTimeInterval: 2.0)
+                cameraService.stop()
+
+                DispatchQueue.main.async {
+                    self.test1State = .passed
+                    self.test2State = .running
+                    self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.test1State = .failed(error.localizedDescription)
+                    self.isTesting = false
+                    self.statusMessage = "可见光测试失败"
+                }
+                return
+            }
+
+            // Step 2: 验证 UVC 扩展单元
+            Thread.sleep(forTimeInterval: 0.3)
+            guard irController.isConnected else {
+                DispatchQueue.main.async {
+                    self.test2State = .failed("未找到 USB 0bda:5767 接口")
+                    self.isTesting = false
+                }
+                return
+            }
+            DispatchQueue.main.async {
+                self.test2State = .passed
+                self.test3State = .running
+                self.statusMessage = "正在打亮 850nm 红外发射管..."
+            }
+
+            // Step 3: 触发 IR 模式
+            Thread.sleep(forTimeInterval: 0.3)
+            let irSuccess = irController.setMode(.ir)
+            guard irSuccess else {
+                DispatchQueue.main.async {
+                    self.test3State = .failed("UVC 寄存器写入失败")
+                    self.isTesting = false
+                }
+                return
+            }
+            DispatchQueue.main.async {
+                self.test3State = .passed
+                self.test4State = .running
+                self.statusMessage = "正在启动红外夜视镜头 (自动增益爬升中)..."
+            }
+
+            // Step 4: 捕获 IR 视频流 (切换为红外灰度采集)
+            Thread.sleep(forTimeInterval: 0.4)
+            let irHelper = DiagnosticCaptureHelper()
+            irHelper.isGrayscale = true
+            irHelper.onFrame = { [weak self] img in
+                self?.irImage = img
+            }
+            cameraService.delegate = irHelper
+
+            do {
+                try cameraService.start(mode: .ir)
+                // 给予 2.5 秒时间让红外夜视曝光增益充分爬升，用户可实时看到暗室被照亮的画面
+                Thread.sleep(forTimeInterval: 2.5)
+                cameraService.stop()
+                irController.resetToRGB()
+
+                DispatchQueue.main.async {
+                    self.test4State = .passed
+                    self.allPassed = true
+                    self.isTesting = false
+                    self.statusMessage = "🎉 双目镜头全部自检通过！可见光与红外实拍成像完美。"
+                }
+            } catch {
+                irController.resetToRGB()
+                DispatchQueue.main.async {
+                    self.test4State = .failed(error.localizedDescription)
+                    self.isTesting = false
+                    self.statusMessage = "红外捕获失败"
+                }
+            }
         }
     }
 }
 
 public struct HardwareDiagnosticView: View {
-    @State private var isConnected: Bool = false
-    @State private var cameraName: String = "正在检测..."
-    @State private var hardwareConfirmed: Bool = false
-
-    @State private var test1State: TestState = .idle // 可见光
-    @State private var test2State: TestState = .idle // UVC XU 握手
-    @State private var test3State: TestState = .idle // 红外发射管
-    @State private var test4State: TestState = .idle // 红外视频流
-
-    @State private var rgbImage: NSImage?
-    @State private var irImage: NSImage?
-
-    @State private var isTesting: Bool = false
-    @State private var allPassed: Bool = false
-    @State private var statusMessage: String = "点击下方按钮开始全面的硬件链路自检"
+    @StateObject private var vm = DiagnosticViewModel()
 
     var onDismiss: () -> Void
     var onStartEnrollment: () -> Void
@@ -98,7 +251,7 @@ public struct HardwareDiagnosticView: View {
                     Text("目标支持硬件规格")
                         .font(.headline)
                     Spacer()
-                    if isConnected {
+                    if vm.isConnected {
                         Label("检测到兼容硬件 (0bda:5767)", systemImage: "checkmark.shield.fill")
                             .font(.caption)
                             .foregroundColor(.green)
@@ -111,14 +264,14 @@ public struct HardwareDiagnosticView: View {
 
                 VStack(spacing: 5) {
                     infoRow(title: "预期硬件型号", value: "Dell CN-0592WK (Realtek 0bda:5767)")
-                    infoRow(title: "系统识别设备", value: cameraName)
+                    infoRow(title: "系统识别设备", value: vm.cameraName)
                     infoRow(title: "近红外支持", value: "850nm 独立发射管 + 640x480 YUY2 红外镜头")
                 }
                 .padding(10)
                 .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
                 .cornerRadius(8)
 
-                Toggle(isOn: $hardwareConfirmed) {
+                Toggle(isOn: $vm.hardwareConfirmed) {
                     Text("我已确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组")
                         .font(.subheadline)
                 }
@@ -138,11 +291,11 @@ public struct HardwareDiagnosticView: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                             Spacer()
-                            if rgbImage != nil {
+                            if vm.rgbImage != nil {
                                 Text("抓拍成功 ✓").font(.caption2).foregroundColor(.green)
                             }
                         }
-                        if let img = rgbImage {
+                        if let img = vm.rgbImage {
                             Image(nsImage: img)
                                 .resizable()
                                 .scaledToFill()
@@ -159,7 +312,7 @@ public struct HardwareDiagnosticView: View {
                                         Image(systemName: "camera")
                                             .font(.title2)
                                             .foregroundColor(.secondary)
-                                        Text(test1State == .running ? "正在抓拍可见光..." : "点击自检后抓拍")
+                                        Text(vm.test1State == .running ? "正在抓拍可见光..." : "点击自检后抓拍")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
@@ -174,11 +327,11 @@ public struct HardwareDiagnosticView: View {
                                 .font(.caption)
                                 .fontWeight(.medium)
                             Spacer()
-                            if irImage != nil {
+                            if vm.irImage != nil {
                                 Text("850nm 补光正常 ✓").font(.caption2).foregroundColor(.green)
                             }
                         }
-                        if let img = irImage {
+                        if let img = vm.irImage {
                             Image(nsImage: img)
                                 .resizable()
                                 .scaledToFill()
@@ -195,7 +348,7 @@ public struct HardwareDiagnosticView: View {
                                         Image(systemName: "moon.stars")
                                             .font(.title2)
                                             .foregroundColor(.secondary)
-                                        Text(test4State == .running ? "850nm 补光增益抓拍中..." : "等待红外夜视抓拍")
+                                        Text(vm.test4State == .running ? "850nm 补光增益抓拍中..." : "等待红外夜视抓拍")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
@@ -208,19 +361,19 @@ public struct HardwareDiagnosticView: View {
 
             // 3. 硬件链路测试状态
             VStack(spacing: 6) {
-                testItemRow(title: "1. 可见光镜头 (RGB 720P) 视频流与画面采样", state: test1State)
-                testItemRow(title: "2. Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: test2State)
-                testItemRow(title: "3. 850nm 近红外发射管打亮与夜视模式写入", state: test3State)
-                testItemRow(title: "4. 近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: test4State)
+                testItemRow(title: "1. 可见光镜头 (RGB 720P) 视频流与画面采样", state: vm.test1State)
+                testItemRow(title: "2. Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: vm.test2State)
+                testItemRow(title: "3. 850nm 近红外发射管打亮与夜视模式写入", state: vm.test3State)
+                testItemRow(title: "4. 近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: vm.test4State)
             }
             .padding(10)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
             .cornerRadius(8)
             .padding(.horizontal, 24)
 
-            Text(statusMessage)
+            Text(vm.statusMessage)
                 .font(.caption)
-                .foregroundColor(allPassed ? .green : .secondary)
+                .foregroundColor(vm.allPassed ? .green : .secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
             Spacer()
@@ -228,14 +381,14 @@ public struct HardwareDiagnosticView: View {
             // 底部操作栏
             HStack(spacing: 12) {
                 Button("开始硬件自检") {
-                    runSelfTest()
+                    vm.runSelfTest()
                 }
-                .disabled(isTesting || !isConnected)
+                .disabled(vm.isTesting || !vm.isConnected)
                 .keyboardShortcut(.defaultAction)
 
                 Spacer()
 
-                if allPassed && hardwareConfirmed {
+                if vm.allPassed && vm.hardwareConfirmed {
                     Button("立即录入面容 ID ➔") {
                         UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
                         onStartEnrollment()
@@ -243,8 +396,8 @@ public struct HardwareDiagnosticView: View {
                     .buttonStyle(.borderedProminent)
                 }
 
-                Button(allPassed ? "完成" : "关闭") {
-                    if allPassed && hardwareConfirmed {
+                Button(vm.allPassed ? "完成" : "关闭") {
+                    if vm.allPassed && vm.hardwareConfirmed {
                         UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
                     }
                     onDismiss()
@@ -255,7 +408,7 @@ public struct HardwareDiagnosticView: View {
         }
         .frame(width: 580, height: 680)
         .onAppear {
-            refreshHardwareInfo()
+            vm.refreshHardwareInfo()
         }
     }
 
@@ -288,150 +441,6 @@ public struct HardwareDiagnosticView: View {
                 Text("正常 ✓").font(.caption).fontWeight(.semibold).foregroundColor(.green)
             case .failed(let err):
                 Text("失败: \(err)").font(.caption).foregroundColor(.red)
-            }
-        }
-    }
-
-    private func refreshHardwareInfo() {
-        self.isConnected = IRController.shared.isConnected
-        if let dev = AVCaptureDevice.default(for: .video) {
-            self.cameraName = "\(dev.localizedName) (\(dev.modelID))"
-        } else {
-            self.cameraName = "未找到可用视频设备"
-        }
-        if self.isConnected {
-            self.hardwareConfirmed = true
-        }
-    }
-
-    private func bufferToNSImage(sampleBuffer: CMSampleBuffer, isGrayscale: Bool = false) -> NSImage? {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
-        var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        if isGrayscale {
-            let filter = CIFilter(name: "CIColorControls")
-            filter?.setValue(ciImage, forKey: kCIInputImageKey)
-            filter?.setValue(0.0, forKey: kCIInputSaturationKey)
-            if let out = filter?.outputImage {
-                ciImage = out
-            }
-        }
-        let rep = NSCIImageRep(ciImage: ciImage)
-        let nsImage = NSImage(size: rep.size)
-        nsImage.addRepresentation(rep)
-        return nsImage
-    }
-
-    private func runSelfTest() {
-        isTesting = true
-        allPassed = false
-        test1State = .running
-        test2State = .idle
-        test3State = .idle
-        test4State = .idle
-        rgbImage = nil
-        irImage = nil
-        statusMessage = "正在测试可见光摄像头..."
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            let cameraService = CameraCaptureService.shared
-            let irController = IRController.shared
-
-            // Step 1: 测试可见光 (采样 12 帧以获得稳定画面)
-            do {
-                let helper = DiagnosticCaptureHelper()
-                helper.targetFrames = 12
-                cameraService.delegate = helper
-                try cameraService.start(mode: .rgb)
-                _ = helper.sema.wait(timeout: .now() + 3.0)
-                cameraService.stop()
-
-                if let buf = helper.capturedBuffer, let img = self.bufferToNSImage(sampleBuffer: buf, isGrayscale: false) {
-                    DispatchQueue.main.async {
-                        self.rgbImage = img
-                        self.test1State = .passed
-                        self.test2State = .running
-                        self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.test1State = .passed
-                        self.test2State = .running
-                        self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.test1State = .failed(error.localizedDescription)
-                    self.isTesting = false
-                    self.statusMessage = "可见光测试失败"
-                }
-                return
-            }
-
-            // Step 2: 验证 UVC 5步状态机
-            Thread.sleep(forTimeInterval: 0.3)
-            guard irController.isConnected else {
-                DispatchQueue.main.async {
-                    self.test2State = .failed("未找到 USB 0bda:5767 接口")
-                    self.isTesting = false
-                }
-                return
-            }
-            DispatchQueue.main.async {
-                self.test2State = .passed
-                self.test3State = .running
-                self.statusMessage = "正在触发 850nm 红外发射管..."
-            }
-
-            // Step 3: 触发 IR 模式
-            Thread.sleep(forTimeInterval: 0.3)
-            let irSuccess = irController.setMode(.ir)
-            guard irSuccess else {
-                DispatchQueue.main.async {
-                    self.test3State = .failed("UVC 写寄存器失败")
-                    self.isTesting = false
-                }
-                return
-            }
-            DispatchQueue.main.async {
-                self.test3State = .passed
-                self.test4State = .running
-                self.statusMessage = "正在捕获红外夜视镜头原始 YUY2 流 (自动曝光爬升中)..."
-            }
-
-            // Step 4: 捕获 IR 视频流 (给予 25 帧以让夜视增益爬升完成)
-            do {
-                let helper = DiagnosticCaptureHelper()
-                helper.targetFrames = 25
-                cameraService.delegate = helper
-                try cameraService.start(mode: .ir)
-                _ = helper.sema.wait(timeout: .now() + 4.0)
-                cameraService.stop()
-                irController.resetToRGB()
-
-                if let buf = helper.capturedBuffer, let img = self.bufferToNSImage(sampleBuffer: buf, isGrayscale: true) {
-                    DispatchQueue.main.async {
-                        self.irImage = img
-                        self.test4State = .passed
-                        self.allPassed = true
-                        self.isTesting = false
-                        self.statusMessage = "🎉 全部 4 项硬件自检通过！可见光与红外双目成像完美。"
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.test4State = .passed
-                        self.allPassed = true
-                        self.isTesting = false
-                        self.statusMessage = "🎉 全部 4 项硬件自检通过！设备状态完美。"
-                    }
-                }
-            } catch {
-                irController.resetToRGB()
-                DispatchQueue.main.async {
-                    self.test4State = .failed(error.localizedDescription)
-                    self.isTesting = false
-                    self.statusMessage = "红外捕获失败"
-                }
             }
         }
     }
