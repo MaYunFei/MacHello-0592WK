@@ -22,6 +22,12 @@
 - 🍏 **原生 Menu Bar 状态栏应用**：
   - 配置 `LSUIElement = true`，**Dock 栏完全不显示图标**，只在屏幕右上角状态栏静默驻留一个原生小图标；
   - 点击弹出原生菜单，实时查看模组连接状态、人脸库管理与红外开关测试。
+- 🚶 **走开息屏 · 来人亮屏 (Human Presence Detection - HPD)**：
+  - 毫秒级低功耗检测，用户离开座位达到指定时长（10秒/15秒/30秒/1分钟可选），自动触发 `pmset displaysleepnow` 熄灭屏幕（保持系统与后台运行）；
+  - 当用户重新回到电脑前，毫秒级点亮屏幕 (`IOPMAssertionDeclareUserActivity`)。
+- 🛡️ **仅限机主本人才亮屏（防窥安全模式）**：
+  - 黑屏休眠状态下，陌生人或路过同事走到屏幕前，特征比对失败，**坚决保持黑屏锁定**；
+  - 只有**已录入的机主本人**靠近，比对余弦相似度通过，才允许瞬间点亮屏幕！
 - 🌙 **Dell CN-0592WK 硬件级红外泛光**：
   - 无论全黑房间还是逆光环境，调用已验证的 Realtek 5 步 UVC XU 扩展协议，**瞬间打亮独立红外 LED 发射管**，抓拍高清晰红外夜视图像；
   - 认证完成后瞬间自动熄灭红外灯，避免无谓发热。
@@ -32,6 +38,18 @@
 - 🔑 **无感系统提权 (PAM 集成)**：
   - 终端输入 `sudo`，摄像头红外灯一闪，看一眼立刻秒提权，再也不用手动敲长密码；
   - 支持屏幕休眠唤醒刷脸解锁。
+
+---
+
+## 🚀 进阶演进路线 (Roadmap)
+
+1. [x] **红外硬件握手与底层驱动 (IOKit C Bridge)**
+2. [x] **实时红外人脸录入向导 GUI (SwiftUI + 4姿态环形进度引导)**
+3. [x] **人体存在感应与息屏/亮屏电源管理 (`DisplayPowerManager`)**
+4. [x] **机主专属亮屏与陌生人防窥拦截 (`PresenceAutoDisplayService`)**
+5. [ ] **键鼠活跃感知 + 智能间歇低频轮询**（打字/鼠标操作期间摄像头 100% 断电，彻底解决摄像头小白工作灯常亮问题）
+6. [ ] **隔空手势识别交互 (Air Gestures)**（利用 Apple Vision 21 点手部骨骼算法，实现“挥手锁屏”、“隔空一键静音/暂停”等实用交互）
+7. [ ] **macOS PAM 终端与锁屏刷脸秒解锁集成**
 
 ---
 
@@ -46,21 +64,19 @@
 
 ---
 
-## 🧪 硬件测试与验证
-
-本项目内置了原生的自检诊断工具与录入工具：
+## 🧪 硬件测试与运行方式
 
 ```bash
-# 运行单元测试
+# 1. 编译并运行原生菜单栏应用
+swift run MacHello
+
+# 2. 运行单元测试
 swift test
 
-# 运行硬件诊断工具（自动测试可见光、红外切换并保存测试图像至 Tests/Snapshots/，随后安全复位）
+# 3. 运行硬件诊断工具（自动测试可见光、红外切换并保存测试图像至 Tests/Snapshots/，随后安全复位）
 swift run MacHelloDoctor
 
-# 运行人体存在感应监控（实时检测是否有人，有人时自动弹出 macOS 桌面横幅通知）
-swift run MacHelloPresence
-
-# 运行仿 iPhone 面容 ID 红外录入向导（支持戴镜常规外观 + 脱镜替用外观两轮录入）
+# 4. 运行仿 iPhone 面容 ID 红外录入向导
 swift run MacHelloEnroll
 ```
 
@@ -76,21 +92,6 @@ swift run MacHelloEnroll
    Linux 下久负盛名的 Windows Hello 开源实现，为本项目的 PAM 认证架构与安全回退设计提供了极为宝贵的参考。
 3. **[GunduLabs/gaze](https://github.com/GunduLabs/gaze)**  
    为跨平台用户空间 USB/UVC 控制提供了关键指导。
-
----
-
-## 📂 项目组织结构
-
-```text
-MacHello-0592WK/
-├── AGENT.md                 # AI Agent 专属技术基线与真值字典
-├── README.md                # 本文件：产品说明与技术规格
-├── Package.swift            # 现代 Swift Package Manager (SPM) 构建定义
-└── Sources/
-    ├── MacHello/            # Menu Bar App 视图与交互 (SwiftUI / AppKit)
-    ├── MacHelloCore/        # 核心服务 (IOKit 红外控制 / AVFoundation / Apple Vision)
-    └── MacHelloPAM/         # 系统 sudo 免密认证插件
-```
 
 ---
 

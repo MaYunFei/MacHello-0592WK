@@ -14,9 +14,11 @@
    - 仅在屏幕右上角系统菜单栏（Menu Bar）驻留一个精致的图标（类似 macOS 原生 Face ID 轮廓小图标）。
    - 点击菜单栏图标弹出原生控制面板：
      - 当前设备连接状态（🟢 戴尔 0592WK 已就绪 / 🔴 未连接）
+     - 人体感应总开关（走开息屏 / 来人亮屏）
+     - 机主专属防窥鉴权模式（仅限机主本人才亮屏）
+     - 离席等待时长（10秒/15秒/30秒/60秒）
      - 🌙 红外硬件测试（手动点亮/熄灭测试）
      - 📸 录入新面孔（Face Enrollment）
-     - ⚙️ 设置（开机自启、开启 sudo 免密、开启唤醒解锁）
      - 🚪 退出应用
 2. **后台常驻与开机启动**：
    - 使用现代 macOS 原生 `SMAppService.mainApp.register()` 管理开机无感自启。
@@ -30,9 +32,11 @@
 | **编程语言** | **Swift 5.9+ / Swift Package Manager (SPM)** | 编译为原生机器码，无 Python/Conda 解释器开销，双击即用 |
 | **GUI 架构** | **SwiftUI + AppKit (`NSStatusItem` / `MenuBarExtra`)** | 原生 macOS 视觉规范，极低资源占用 |
 | **视频采集** | **AVFoundation (`AVCaptureSession`)** | 苹果官方原生相机框架，硬解 720P 零 CPU 占用，免驱动 |
-| **红外控制** | **IOKit (`IOUSBDeviceInterface`) 或轻量 `libusb-1.0` C 绑定** | 直接向 USB `0bda:5767` 发送 5 步 UVC XU 控制传输 |
-| **人脸特征与活体** | **Apple Vision Framework (`VNDetectFaceLandmarksRequest`) + CoreML** | **系统原生内置，0 外部依赖**！直接调用 Apple Silicon 统一内存与 NPU (ANE) 加速，比对仅需 5ms |
-| **系统认证接入** | **macOS PAM (Pluggable Authentication Module)** | 通过 `/etc/pam.d/sudo` 配合轻量 C/Swift 验证器，看一眼秒提权 |
+| **红外控制** | **IOKit (`IOUSBDeviceInterface`) 或轻量 `CIOKitHelper` C 绑定** | 直接向 USB `0bda:5767` 发送 5 步 UVC XU 控制传输 |
+| **人脸特征与活体** | **Apple Vision Framework (`VNCreateFaceprintRequest`) + CoreML** | **系统原生内置，0 外部依赖**！直接调用 Apple Silicon 统一内存与 NPU (ANE) 加速，比对仅需 5ms |
+| **电源与屏幕管理** | **`pmset displaysleepnow` + `IOPMAssertionDeclareUserActivity`** | 纯显示屏黑屏/亮屏，不影响主机 CPU 和后台进程 |
+| **空闲事件检测** | **`CGEventSource.secondsSinceLastEventType`** | 0 开销获取系统键鼠最后输入时间 |
+| **隔空手势** | **Apple Vision (`VNDetectHumanHandPoseRequest`)** | 21 点手部骨骼检测，实现挥手秒锁屏、隔空静音等 |
 
 ---
 
@@ -46,6 +50,9 @@
   - **RGB 模式**：支持 720P (1280x720 MJPEG) 等彩色格式。
   - **IR 模式**：**硬件传感器固定为 640x480 YUY2 (未压缩原始数据流)**。切换至 IR 模式时必须同步将视频流协商/裁剪至 640x480，严禁在 720P 流进行中直接切 IR（会导致固件忽略切换或死锁）。
   - **红外特征提取**：红外 YUY2 流在 macOS 解码时会带环境光白平衡，人脸活体特征处理时需转为单通道灰度（Grayscale / L 通道）作为标准 Windows Hello 图像。
+- **指示灯与硬件隐私 Interlock 说明**：
+  - 模组上的白色/绿色微型指示灯是硬件直连 CMOS 供电电路的隐私指示灯，软件无法直接关断；
+  - 最佳解决方案为：**键鼠活跃时 100% 停止摄像头（灯全灭），键盘鼠标停顿超时后才开启 0.5 秒探测一次，息屏后采用 2~3 秒脉冲巡检**。
 - **UVC Extension Unit 属性**：
   - **Unit ID**: `0x04`
   - **XU Selector 0x0A**: 写入寻址/复位
@@ -70,7 +77,9 @@
 1. **红外灯物理寿命保护 (Safe Guard)**：
    - 红外 LED 发射管功率较高，**绝对禁止无节制常开**；
    - 每次认证触发时点亮红外，完成抓拍比对后（或超时 3 秒后），**必须在 Swift 的 `defer` 块中无条件将硬件切回可见光 RGB 模式（`mode_byte = 0x01`）**。
-2. **免密提权防死锁**：
+2. **菜单栏防止高频重绘 (Menu Bar Throttle)**：
+   - 禁止在相机每一帧回调中修改 `@Published` 属性，必须使用差分比对（仅当状态发生布尔反转或实际改变时才发射事件），防止 macOS `NSMenu` 子菜单发生高频销毁与闪烁。
+3. **免密提权防死锁**：
    - PAM 模块若在 3 秒内未比对到人脸或发生摄像头异常，必须立即返回 `PAM_AUTH_ERR` 并退回到原生密码输入，严禁卡死系统终端。
 
 ---
@@ -85,14 +94,14 @@ MacHello-0592WK/
 └── Sources/
     ├── MacHello/            # App 入口与菜单栏界面 (SwiftUI / AppKit)
     │   ├── MacHelloApp.swift
-    │   ├── MenuBarController.swift
-    │   └── Views/
-    ├── MacHelloCore/        # 核心逻辑 (硬件驱动 + 视觉 AI + 认证状态机)
-    │   ├── Hardware/
-    │   │   └── IRController.swift (IOKit / libusb 5步握手)
-    │   ├── Capture/
-    │   │   └── CameraCaptureService.swift (AVFoundation)
-    │   └── Recognition/
-    │       └── FaceRecognizer.swift (Apple Vision / CoreML)
+    │   ├── Controllers/     # 窗口控制器
+    │   └── Views/           # 录入引导环形界面
+    ├── MacHelloCore/        # 核心逻辑
+    │   ├── Hardware/        # IOKit USB 5步握手
+    │   ├── Capture/         # AVFoundation 摄像头采集
+    │   ├── Power/           # 屏幕息屏/亮屏电源控制 (pmset / IOPM)
+    │   ├── Presence/        # 人体存在感应与键鼠空闲调度
+    │   ├── Gestures/        # Apple Vision 21 点手部手势交互 (规划中)
+    │   └── Recognition/     # Apple Vision 人脸特征向量与模型持久化
     └── MacHelloPAM/         # PAM 动态链接库模块 (C / Swift)
 ```
