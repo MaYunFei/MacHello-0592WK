@@ -1,0 +1,17 @@
+# Swift / Xcode Build Outputs
+.build/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+
+# IDE & OS Specific
+.DS_Store
+.AppleDouble
+.LSOverride
+.idea/
+.vscode/
+
+# Local model and face records
+*.swp
+*.swo
+data/
