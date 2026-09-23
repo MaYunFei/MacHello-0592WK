@@ -95,8 +95,8 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-# 代码签名（使用本地自签名，保证权限体系正常加载）
-codesign --force --deep --sign - "$APP_DIR" > /dev/null 2>&1 || true
+# 代码签名（使用本地自签名，保证权限体系正常加载与稳定的权限缓存）
+codesign --force --deep --sign - --identifier "com.machello.app" "$APP_DIR" > /dev/null 2>&1 || true
 
 echo "✅ [5/5] 打包成功: $APP_DIR"
 

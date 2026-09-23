@@ -9,7 +9,8 @@ public final class AccessibilityHelper {
 
     /// 检查应用是否已获得 macOS 辅助功能 (Accessibility) 信任
     public var isTrusted: Bool {
-        return AXIsProcessTrusted()
+        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: false]
+        return AXIsProcessTrustedWithOptions(options)
     }
 
     /// 弹出系统辅助功能权限请求提示

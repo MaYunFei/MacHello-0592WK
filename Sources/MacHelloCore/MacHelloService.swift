@@ -59,6 +59,23 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             }
         }
 
+        // 定期（每 1 秒）自动检测系统辅助功能与钥匙串状态，用户一旦在系统设置中勾选立刻无感秒变绿勾
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let trusted = AccessibilityHelper.shared.isTrusted
+            if self.isAccessibilityTrusted != trusted {
+                DispatchQueue.main.async {
+                    self.isAccessibilityTrusted = trusted
+                }
+            }
+            let hasPw = KeychainHelper.shared.hasPassword()
+            if self.hasStoredPassword != hasPw {
+                DispatchQueue.main.async {
+                    self.hasStoredPassword = hasPw
+                }
+            }
+        }
+
         refreshStatus()
     }
 

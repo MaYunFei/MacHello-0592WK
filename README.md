@@ -142,7 +142,9 @@ sudo ./scripts/uninstall-pam.sh   # 安全还原卸载
    由 **SeeleVolleri** 与 **MrWinux** 逆向分析并公开的 Realtek UVC 扩展单元（Unit 4）5 步状态机握手机制（0x0A / 0x0B 选择器及 `0xfb00`、`0x9f00` 寄存器交互），这是本项目控制红外硬件的核心理论与指令基石。
 2. **[boltgolt/howdy](https://github.com/boltgolt/howdy)**  
    Linux 下久负盛名的 Windows Hello 开源实现，为本项目的 PAM 认证架构与安全回退设计提供了极为宝贵的参考。
-3. **[GunduLabs/gaze](https://github.com/GunduLabs/gaze)**  
+3. **[ts1/BLEUnlock](https://github.com/ts1/BLEUnlock)**  
+   由 **Takeshi Sone** 编写的知名开源 macOS 自动锁屏/解锁工具。本项目在实现锁屏唤醒电源管理（`IOPMAssertionDeclareUserActivity` 与 `caffeinate`）、底层 HID 按键模拟序列注入（`cghidEventTap` 与 Return/Enter 兼容键值）以及钥匙串安全管理机制时，深入借鉴了其优雅成熟的架构设计，在此致以崇高敬意与由衷感谢！
+4. **[GunduLabs/gaze](https://github.com/GunduLabs/gaze)**  
    为跨平台用户空间 USB/UVC 控制提供了关键指导。
 
 ---
