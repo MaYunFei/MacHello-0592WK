@@ -6,6 +6,15 @@ import MacHelloCore
 struct MacHelloApp: App {
     @StateObject private var service = MacHelloService.shared
 
+    init() {
+        // 首次打开或未确认硬件时，自动弹出硬件自检与设备确认向导
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if !UserDefaults.standard.bool(forKey: "com.machello.hardwareVerified") {
+                DiagnosticWindowController.shared.showWindow()
+            }
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra("MacHello", systemImage: service.isDeviceConnected ? "faceid" : "person.crop.circle.badge.exclamationmark") {
             VStack(alignment: .leading, spacing: 6) {
@@ -94,7 +103,13 @@ struct MacHelloApp: App {
 
                 Divider()
 
-                // 3. 面容录入与硬件功能
+                // 3. 硬件向导与面容功能
+                Button(action: {
+                    DiagnosticWindowController.shared.showWindow()
+                }) {
+                    Label("设备自检与硬件确认向导...", systemImage: "wrench.and.screwdriver")
+                }
+
                 Button(action: {
                     service.refreshStatus()
                     EnrollmentWindowController.shared.showWindow()
