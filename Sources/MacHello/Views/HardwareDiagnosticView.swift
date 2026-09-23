@@ -91,18 +91,53 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     private var lastUpdate: TimeInterval = 0
     public var frameCount = 0
     private var bestJPEGData: Data?
+    private var bestLuminance: Float = 0.0
+
+    private func calculateAverageLuminance(pixelBuffer: CVPixelBuffer) -> Float {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 0 }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+
+        var totalLum: Float = 0
+        var samples: Float = 0
+        let stepX = max(1, width / 20)
+        let stepY = max(1, height / 20)
+
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+        for y in stride(from: height / 4, to: (3 * height) / 4, by: stepY) {
+            let row = ptr.advanced(by: y * bytesPerRow)
+            for x in stride(from: width / 4, to: (3 * width) / 4, by: stepX) {
+                let b = Float(row[x * 4])
+                let g = Float(row[x * 4 + 1])
+                let r = Float(row[x * 4 + 2])
+                totalLum += (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+                samples += 1.0
+            }
+        }
+        return samples > 0 ? (totalLum / samples) : 0
+    }
 
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         frameCount += 1
         // 红外模式下跳过最初 6 帧，避免曝光增益爬升初期的暗帧
         if isGrayscale && frameCount < 7 { return }
 
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let lum = calculateAverageLuminance(pixelBuffer: pixelBuffer)
+
+        // 核心保护：如果之前已经抓取到正常照亮的人脸（bestLuminance > 0.06），而新帧变黑（lum < 0.03，如硬件眼部保护自动灭灯或停机冲刷），坚决拒绝覆盖！
+        if isGrayscale && bestLuminance > 0.06 && lum < 0.035 {
+            return
+        }
+
         let now = CACurrentMediaTime()
         // 限制在 ~15fps (约 65ms 一帧)，既丝滑生动，又绝不卡顿 UI
         guard now - lastUpdate >= 0.065 else { return }
         lastUpdate = now
 
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         if isGrayscale {
             if let filter = CIFilter(name: "CIColorControls") {
@@ -120,10 +155,13 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
             DispatchQueue.main.async { [weak self] in
                 self?.onFrame?(nsImage)
             }
-            // 实时保留稳态有效帧的 JPEG 数据，供测试存档查验
+            // 实时保留最佳亮度有效帧的 JPEG 数据，供测试存档查验
             let colorSpace = CGColorSpaceCreateDeviceRGB()
             if let data = ciContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [:]) {
-                self.bestJPEGData = data
+                if lum >= self.bestLuminance || self.bestJPEGData == nil {
+                    self.bestLuminance = lum
+                    self.bestJPEGData = data
+                }
             }
         }
     }
@@ -283,8 +321,8 @@ public final class DiagnosticViewModel: ObservableObject {
 
             do {
                 try cameraService.start(mode: .ir)
-                // 给予 2.5 秒时间让红外夜视曝光增益充分爬升，用户可实时看到暗室被照亮的画面
-                Thread.sleep(forTimeInterval: 2.5)
+                // 给予 1.2 秒时间让红外夜视曝光增益充分爬升，处于人眼安全看门狗阈值内
+                Thread.sleep(forTimeInterval: 1.2)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的空帧/黑帧冲刷
                 cameraService.stop()
                 irHelper.saveSnapshot()
