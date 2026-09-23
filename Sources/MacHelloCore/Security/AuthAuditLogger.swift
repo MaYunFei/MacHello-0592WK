@@ -3,8 +3,39 @@ import CoreMedia
 import CoreImage
 import AppKit
 
-public final class AuthAuditLogger {
+public struct AuditRecord: Identifiable, Codable {
+    public let id: String
+    public let timestamp: Date
+    public let reason: String
+    public let score: Float
+    public let success: Bool
+    public let filename: String
+
+    public var displayTitle: String {
+        switch reason {
+        case "lockscreen": return "锁屏免密自动解锁"
+        case "wake_display": return "人脸靠近感应亮屏"
+        case "admin_prompt": return "系统管理员弹窗提权"
+        case "terminal_sudo": return "终端 Sudo 刷脸认证"
+        default: return "面容识别认证"
+        }
+    }
+
+    public var displayIcon: String {
+        switch reason {
+        case "lockscreen": return "lock.open.fill"
+        case "wake_display": return "display"
+        case "admin_prompt": return "shield.fill"
+        case "terminal_sudo": return "terminal.fill"
+        default: return "person.crop.circle.fill"
+        }
+    }
+}
+
+public final class AuthAuditLogger: ObservableObject {
     public static let shared = AuthAuditLogger()
+
+    @Published public var records: [AuditRecord] = []
 
     public var historyDirectory: URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -13,23 +44,46 @@ public final class AuthAuditLogger {
         return dir
     }
 
+    private var jsonIndexURL: URL {
+        return historyDirectory.appendingPathComponent("history.json")
+    }
+
     private let maxHistoryCount = 50
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
-    private let fileQueue = DispatchQueue(label: "com.machello.authaudit.queue")
+    private let queue = DispatchQueue(label: "com.machello.authaudit.queue")
 
-    private init() {}
+    private init() {
+        loadRecords()
+    }
+
+    public func loadRecords() {
+        if let data = try? Data(contentsOf: jsonIndexURL),
+           let list = try? JSONDecoder().decode([AuditRecord].self, from: data) {
+            DispatchQueue.main.async {
+                self.records = list.sorted(by: { $0.timestamp > $1.timestamp })
+            }
+        }
+    }
+
+    private func saveRecordsToDisk() {
+        if let data = try? JSONEncoder().encode(records) {
+            try? data.write(to: jsonIndexURL)
+        }
+    }
 
     /// 记录一次人脸解锁/认证的抓拍实况与日志
     public func recordAuth(pixelBuffer: CVPixelBuffer, reason: String, score: Float, success: Bool) {
-        fileQueue.async { [weak self] in
+        queue.async { [weak self] in
             guard let self = self else { return }
 
+            let id = UUID().uuidString
+            let now = Date()
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyyMMdd_HHmmss"
-            let timestamp = formatter.string(from: Date())
+            let timeStr = formatter.string(from: now)
 
             let status = success ? "pass" : "fail"
-            let filename = "\(timestamp)_\(reason)_\(status)_sim\(String(format: "%.2f", score)).jpg"
+            let filename = "\(timeStr)_\(reason)_\(status)_sim\(String(format: "%.2f", score)).jpg"
             let fileURL = self.historyDirectory.appendingPathComponent(filename)
 
             var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
@@ -49,11 +103,70 @@ public final class AuthAuditLogger {
 
             let logFormatter = DateFormatter()
             logFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-            let logLine = "[\(logFormatter.string(from: Date()))] [\(reason)] \(success ? "✓ 认证成功" : "× 认证失败") | 相似度: \(String(format: "%.3f", score)) | 照片: \(filename)"
+            let logLine = "[\(logFormatter.string(from: now))] [\(reason)] \(success ? "✓ 认证成功" : "× 认证失败") | 相似度: \(String(format: "%.3f", score)) | 照片: \(filename)"
             self.appendLog(logLine)
 
-            self.pruneOldHistory()
+            let newRecord = AuditRecord(
+                id: id,
+                timestamp: now,
+                reason: reason,
+                score: score,
+                success: success,
+                filename: filename
+            )
+
+            DispatchQueue.main.async {
+                var updated = self.records
+                updated.insert(newRecord, at: 0)
+                if updated.count > self.maxHistoryCount {
+                    let surplus = updated.suffix(from: self.maxHistoryCount)
+                    for item in surplus {
+                        let path = self.historyDirectory.appendingPathComponent(item.filename)
+                        try? FileManager.default.removeItem(at: path)
+                    }
+                    updated = Array(updated.prefix(self.maxHistoryCount))
+                }
+                self.records = updated
+                self.saveRecordsToDisk()
+            }
         }
+    }
+
+    public func deleteRecord(id: String) {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if let item = self.records.first(where: { $0.id == id }) {
+                let path = self.historyDirectory.appendingPathComponent(item.filename)
+                try? FileManager.default.removeItem(at: path)
+            }
+            DispatchQueue.main.async {
+                self.records.removeAll(where: { $0.id == id })
+                self.saveRecordsToDisk()
+            }
+        }
+    }
+
+    public func clearAllRecords() {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            for item in self.records {
+                let path = self.historyDirectory.appendingPathComponent(item.filename)
+                try? FileManager.default.removeItem(at: path)
+            }
+            DispatchQueue.main.async {
+                self.records.removeAll()
+                self.saveRecordsToDisk()
+            }
+        }
+    }
+
+    public func imageURL(for record: AuditRecord) -> URL {
+        return historyDirectory.appendingPathComponent(record.filename)
+    }
+
+    public func loadImage(for record: AuditRecord) -> NSImage? {
+        let url = imageURL(for: record)
+        return NSImage(contentsOf: url)
     }
 
     private func appendLog(_ message: String) {
@@ -68,23 +181,6 @@ public final class AuthAuditLogger {
                 }
             } else {
                 try? data.write(to: logFile)
-            }
-        }
-    }
-
-    private func pruneOldHistory() {
-        guard let files = try? FileManager.default.contentsOfDirectory(at: historyDirectory, includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles) else { return }
-
-        let jpgFiles = files.filter { $0.pathExtension.lowercased() == "jpg" }
-        if jpgFiles.count > maxHistoryCount {
-            let sorted = jpgFiles.sorted {
-                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                return d1 < d2
-            }
-            let toRemove = sorted.prefix(jpgFiles.count - maxHistoryCount)
-            for f in toRemove {
-                try? FileManager.default.removeItem(at: f)
             }
         }
     }

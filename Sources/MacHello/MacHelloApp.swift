@@ -189,8 +189,8 @@ struct MacHelloApp: App {
                         service.triggerAdminPromptTest()
                     }
 
-                    Button("📸 查看人脸解锁抓拍审计相册...") {
-                        AuthAuditLogger.shared.openHistoryFolder()
+                    Button("📸 查看人脸解锁与通行抓拍历史...") {
+                        AuditHistoryWindowController.shared.showWindow()
                     }
                 }
 

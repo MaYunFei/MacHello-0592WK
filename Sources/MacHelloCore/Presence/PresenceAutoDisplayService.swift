@@ -302,7 +302,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 }
 
                 if foundOwner {
-                    handleOwnerPresent(score: highestScore)
+                    handleOwnerPresent(score: highestScore, pixelBuffer: pixelBuffer)
                 } else {
                     handleStrangerPresent()
                 }
@@ -312,7 +312,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         }
     }
 
-    private func handleOwnerPresent(score: Float) {
+    private func handleOwnerPresent(score: Float, pixelBuffer: CVPixelBuffer? = nil) {
         let changed = (!isPersonPresent || !isOwnerVerified)
         isPersonPresent = true
         isOwnerVerified = true
@@ -321,6 +321,14 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
 
         // 1. 如果屏幕已息屏，机主出现立刻点亮屏幕并自动解锁进桌面！
         if displayManager.isDisplayAsleep {
+            if let pb = pixelBuffer {
+                AuthAuditLogger.shared.recordAuth(
+                    pixelBuffer: pb,
+                    reason: "wake_display",
+                    score: score,
+                    success: true
+                )
+            }
             displayManager.wakeDisplay()
             irController.resetToRGB()
             emitStateChange()
