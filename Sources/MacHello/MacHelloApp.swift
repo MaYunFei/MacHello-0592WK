@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MacHelloCore
 
 @main
@@ -7,7 +8,8 @@ struct MacHelloApp: App {
 
     var body: some Scene {
         MenuBarExtra("MacHello", systemImage: service.isDeviceConnected ? "faceid" : "person.crop.circle.badge.exclamationmark") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                // 设备连接状态指示
                 HStack {
                     Circle()
                         .fill(service.isDeviceConnected ? Color.green : Color.red)
@@ -17,8 +19,26 @@ struct MacHelloApp: App {
                         .foregroundColor(.secondary)
                 }
 
+                // 面容特征库状态
+                HStack {
+                    Image(systemName: service.isEnrolled ? "checkmark.shield.fill" : "shield.slash")
+                        .foregroundColor(service.isEnrolled ? .blue : .secondary)
+                    Text(service.isEnrolled ? "已录入 \(service.enrolledSamplesCount) 组面容特征" : "尚未录入面容数据")
+                        .font(.caption)
+                }
+
                 Divider()
 
+                // 核心功能：打开面容录入窗口 (带实时红外预览与引导)
+                Button(action: {
+                    service.refreshStatus()
+                    EnrollmentWindowController.shared.showWindow()
+                }) {
+                    Label(service.isEnrolled ? "重新录入 / 添加替用外貌..." : "录入面容 ID...", systemImage: "person.crop.circle.badge.plus")
+                }
+                .disabled(!service.isDeviceConnected)
+
+                // 硬件测试：手动点亮/熄灭红外灯
                 Button(action: {
                     service.toggleIRTest()
                 }) {
@@ -26,22 +46,19 @@ struct MacHelloApp: App {
                 }
                 .disabled(!service.isDeviceConnected)
 
-                Button(action: {
-                    service.startFaceEnrollment()
-                }) {
-                    Label("录入面部数据...", systemImage: "person.crop.circle.badge.plus")
-                }
-                .disabled(!service.isDeviceConnected)
-
                 Divider()
 
-                Button("偏好设置...") {
-                    // TODO: 打开设置面板
+                if service.isEnrolled {
+                    Button(action: {
+                        service.clearFaceData()
+                    }) {
+                        Label("清除本地面容数据", systemImage: "trash")
+                    }
                 }
-
-                Divider()
 
                 Button("退出 MacHello") {
+                    EnrollmentWindowController.shared.closeWindow()
+                    IRController.shared.resetToRGB()
                     NSApplication.shared.terminate(nil)
                 }
                 .keyboardShortcut("q")

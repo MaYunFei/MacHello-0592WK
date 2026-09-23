@@ -7,17 +7,22 @@ public class MacHelloService: ObservableObject {
 
     @Published public var isDeviceConnected: Bool = false
     @Published public var isIRActive: Bool = false
+    @Published public var isEnrolled: Bool = false
+    @Published public var enrolledSamplesCount: Int = 0
 
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
 
     public init() {
-        checkDeviceConnection()
+        refreshStatus()
     }
 
-    public func checkDeviceConnection() {
+    public func refreshStatus() {
         self.isDeviceConnected = irController.isConnected
         self.isIRActive = (irController.currentMode == .ir)
+        let profile = FaceDatabase.shared.load()
+        self.isEnrolled = !(profile?.samples.isEmpty ?? true)
+        self.enrolledSamplesCount = profile?.samples.count ?? 0
     }
 
     public func toggleIRTest() {
@@ -28,15 +33,8 @@ public class MacHelloService: ObservableObject {
         }
     }
 
-    public func setIRActive(_ active: Bool) {
-        guard isDeviceConnected else { return }
-        let mode: IRController.Mode = active ? .ir : .rgb
-        if irController.setMode(mode) {
-            self.isIRActive = active
-        }
-    }
-
-    public func startFaceEnrollment() {
-        // TODO: 调用 AVFoundation + Apple Vision 录入
+    public func clearFaceData() {
+        FaceDatabase.shared.clear()
+        refreshStatus()
     }
 }

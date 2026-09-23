@@ -1,6 +1,7 @@
 import Foundation
 import CoreMedia
 import CoreVideo
+import CoreImage
 import CIOKitHelper
 
 public enum EnrollmentStage: String {
@@ -30,6 +31,11 @@ public protocol FaceEnrollmentDelegate: AnyObject {
     func enrollmentStageDidComplete(stage: EnrollmentStage)
     func enrollmentDidFinishAll(totalSamples: Int)
     func enrollmentDidFail(error: String)
+    func enrollmentDidOutputPreview(image: CGImage, stage: EnrollmentStage, currentPose: TargetPose?, isMatching: Bool, faceBoundingBox: CGRect?)
+}
+
+public extension FaceEnrollmentDelegate {
+    func enrollmentDidOutputPreview(image: CGImage, stage: EnrollmentStage, currentPose: TargetPose?, isMatching: Bool, faceBoundingBox: CGRect?) {}
 }
 
 public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
@@ -42,10 +48,11 @@ public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
     private let poses: [TargetPose] = TargetPose.allCases
 
     private var collectedSamples: [FaceSample] = []
-    private var isEnrolling: Bool = false
+    public private(set) var isEnrolling: Bool = false
     private var consecutiveHitCount: Int = 0
     private let requiredHits: Int = 3
 
+    private let ciContext = CIContext()
     private let extractor = FaceFeatureExtractor.shared
     private let captureService = CameraCaptureService.shared
     private let irController = IRController.shared
@@ -56,6 +63,13 @@ public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
 
     public var currentTargetPose: TargetPose {
         return poses[min(currentPoseIndex, poses.count - 1)]
+    }
+
+    public var completedPosesInCurrentStage: Set<TargetPose> {
+        let currentAppearance = (currentStage == .regular) ? "regular" : "alternative"
+        let stageSamples = collectedSamples.filter { $0.appearance == currentAppearance }
+        let completed = stageSamples.compactMap { TargetPose(rawValue: $0.pose) }
+        return Set(completed)
     }
 
     /// 开始录入流程（开启红外摄像头 640x480 并点亮红外 LED）
@@ -106,35 +120,48 @@ public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let faces = extractor.extract(from: pixelBuffer)
-        if faces.isEmpty {
-            consecutiveHitCount = 0
-            return
-        }
-
-        guard faces.count == 1 else {
-            // 视野内有多张人脸时提示
-            delegate?.enrollmentDidUpdateInstruction(
-                stage: currentStage,
-                pose: currentTargetPose,
-                progress: calculateProgress(),
-                message: "⚠️ 视野内检测到多张面孔，请确保只有您一人在镜头前"
-            )
-            consecutiveHitCount = 0
-            return
-        }
-
-        let face = faces[0]
+        let primaryFace = faces.first
         let target = currentTargetPose
+        var isMatching = false
 
-        if isPoseMatching(face: face, target: target) {
-            consecutiveHitCount += 1
-            if consecutiveHitCount >= requiredHits {
-                // 捕获成功该角度样本
+        if let face = primaryFace, faces.count == 1 {
+            isMatching = isPoseMatching(face: face, target: target)
+            if isMatching {
+                consecutiveHitCount += 1
+                if consecutiveHitCount >= requiredHits {
+                    consecutiveHitCount = 0
+                    recordSample(face: face, pose: target)
+                }
+            } else {
                 consecutiveHitCount = 0
-                recordSample(face: face, pose: target)
             }
         } else {
             consecutiveHitCount = 0
+            if faces.count > 1 {
+                delegate?.enrollmentDidUpdateInstruction(
+                    stage: currentStage,
+                    pose: currentTargetPose,
+                    progress: calculateProgress(),
+                    message: "⚠️ 视野内检测到多张面孔，请确保只有您一人在镜头前"
+                )
+            }
+        }
+
+        // 生成高对比度红外灰度预览图，传给 UI 界面渲染
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let grayFilter = CIFilter(name: "CIColorControls")
+        grayFilter?.setValue(ciImage, forKey: kCIInputImageKey)
+        grayFilter?.setValue(0.0, forKey: kCIInputSaturationKey)
+
+        if let outputCI = grayFilter?.outputImage,
+           let cgImage = ciContext.createCGImage(outputCI, from: outputCI.extent) {
+            delegate?.enrollmentDidOutputPreview(
+                image: cgImage,
+                stage: currentStage,
+                currentPose: target,
+                isMatching: isMatching,
+                faceBoundingBox: primaryFace?.boundingBox
+            )
         }
     }
 
@@ -195,7 +222,7 @@ public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
         finishAllEnrollment()
     }
 
-    private func calculateProgress() -> Double {
+    public func calculateProgress() -> Double {
         let stageOffset = (currentStage == .regular) ? 0.0 : 0.5
         let poseProgress = Double(currentPoseIndex) / Double(poses.count) * 0.5
         return stageOffset + poseProgress
