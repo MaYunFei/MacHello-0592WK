@@ -52,7 +52,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public var isSmartIdlePowerSavingEnabled: Bool {
         get {
             if UserDefaults.standard.object(forKey: defaultsKeySmartIdle) == nil {
-                return true // 默认开启
+                return true
             }
             return UserDefaults.standard.bool(forKey: defaultsKeySmartIdle)
         }
@@ -65,6 +65,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public private(set) var isPersonPresent: Bool = false
 
     private var lastSeenOwnerTime: Date = Date()
+    private var lastProbeSuccessTime: Date = .distantPast
     private var absenceTimer: Timer?
     private var lastProcessedFrameTime: Date = .distantPast
     private let frameProcessingInterval: TimeInterval = 0.25 // 约 4 FPS 采样
@@ -99,9 +100,9 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         guard !FaceEnrollmentService.shared.isEnrolling else { return }
 
         lastSeenOwnerTime = Date()
+        lastProbeSuccessTime = Date()
         presenceDetector.autoNotify = false
 
-        // 如果用户正在打字且开启了智能节能，不立刻起相机；否则启动相机
         if !isSmartIdlePowerSavingEnabled || idleMonitor.idleSeconds >= 3.0 {
             if !captureService.isRunning {
                 try? captureService.start(mode: .rgb)
@@ -140,16 +141,17 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
 
             if isSmartIdlePowerSavingEnabled {
                 let idle = idleMonitor.idleSeconds
-                let probeThreshold = max(3.0, absenceTimeout - 3.0)
+                let probeInterval = max(5.0, absenceTimeout - 4.0)
 
-                // 1. 用户正在积极操作键盘鼠标（停手时间 < 阈值）
-                if idle < probeThreshold {
+                // 1. 如果用户正在操作键盘鼠标
+                if idle < 3.0 {
                     lastSeenOwnerTime = Date()
+                    lastProbeSuccessTime = Date()
                     let changed = (!isPersonPresent || !isOwnerVerified)
                     isPersonPresent = true
                     isOwnerVerified = true
 
-                    // 既然机主正在打字操作，果断关闭摄像头！让指示灯 100% 熄灭，CPU 归零！
+                    // 用户正在打字，断开摄像头，指示灯灭，CPU 归零
                     if captureService.isRunning {
                         captureService.stop()
                     }
@@ -157,24 +159,34 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                         emitStateChange()
                     }
                     return
-                } else {
-                    // 2. 停手超时：用户已有一段时间没碰键盘鼠标了
-                    // 启动摄像头进行 0.5s~3s 快速观察（判断是离席还是在安静阅读）
-                    if !captureService.isRunning {
-                        try? captureService.start(mode: .rgb)
-                        captureService.delegate = self
-                    }
+                }
 
-                    // 检查是否已达到离席超时上限
-                    let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
-                    if elapsed >= absenceTimeout {
-                        // 确认无人，立即关闭显示器息屏
-                        displayManager.sleepDisplay()
-                        if captureService.isRunning {
-                            captureService.stop()
-                        }
-                        emitStateChange()
+                // 2. 如果不久前刚刚通过摄像头确认过用户还在（比如过去 8 秒内刚探查过）
+                let timeSinceLastProbe = Date().timeIntervalSince(lastProbeSuccessTime)
+                if timeSinceLastProbe < probeInterval {
+                    // 刚刚探查过机主在位，保持摄像头关闭（指示灯熄灭）
+                    if captureService.isRunning {
+                        captureService.stop()
                     }
+                    return
+                }
+
+                // 3. 距离上次探查已超过 probeInterval，且用户没动键鼠
+                // 启动摄像头进行瞬时探查
+                if !captureService.isRunning {
+                    try? captureService.start(mode: .rgb)
+                    captureService.delegate = self
+                }
+
+                // 4. 检查是否达到离席超时上限
+                let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
+                if elapsed >= absenceTimeout {
+                    // 确认无人，立即息屏
+                    displayManager.sleepDisplay()
+                    if captureService.isRunning {
+                        captureService.stop()
+                    }
+                    emitStateChange()
                 }
             } else {
                 // 常规持续视觉模式
@@ -204,7 +216,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 } else if pulseCycleCounter == 1 {
                     // 维持检测中
                 } else {
-                    // 巡检周期结束，暂无人员靠近，关停相机以熄灭指示灯
+                    // 暂无人员靠近，关停相机以熄灭指示灯
                     if captureService.isRunning {
                         captureService.stop()
                     }
@@ -223,7 +235,6 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     public func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
 
-        // 帧率节流 (约 4 FPS)
         let now = Date()
         guard now.timeIntervalSince(lastProcessedFrameTime) >= frameProcessingInterval else { return }
         lastProcessedFrameTime = now
@@ -262,8 +273,9 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         isPersonPresent = true
         isOwnerVerified = true
         lastSeenOwnerTime = Date()
+        lastProbeSuccessTime = Date()
 
-        // 如果屏幕已息屏，机主出现立刻点亮屏幕！
+        // 1. 如果屏幕已息屏，机主出现立刻点亮屏幕！
         if displayManager.isDisplayAsleep {
             displayManager.wakeDisplay()
             emitStateChange()
@@ -271,9 +283,12 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             emitStateChange()
         }
 
-        // 如果开启了智能节能且用户正在工作屏幕前，确认人在位后可关闭相机熄灭灯
+        // 2. 如果屏幕亮着且开启了智能节能：既然已经看准了机主在位，探查立刻圆满完成！
+        // 瞬间关闭摄像头，指示灯立刻熄灭，绝不一直常亮！
         if !displayManager.isDisplayAsleep && isSmartIdlePowerSavingEnabled {
-            // 人在位，稍后由 checkAbsenceStatus 维持休眠
+            if captureService.isRunning {
+                captureService.stop()
+            }
         }
     }
 
@@ -309,11 +324,19 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
 
         if isPresent {
             lastSeenOwnerTime = Date()
+            lastProbeSuccessTime = Date()
             if displayManager.isDisplayAsleep {
                 displayManager.wakeDisplay()
                 emitStateChange()
             } else if changed {
                 emitStateChange()
+            }
+
+            // 通用模式下确认人在位也立即关相机熄灯
+            if !displayManager.isDisplayAsleep && isSmartIdlePowerSavingEnabled {
+                if captureService.isRunning {
+                    captureService.stop()
+                }
             }
         } else if changed {
             lastSeenOwnerTime = Date()
