@@ -48,7 +48,7 @@
 
 ## 🧪 硬件测试与验证
 
-本项目内置了原生的自检诊断工具，用于一键验证普通 RGB 画面与近红外夜视切换：
+本项目内置了原生的自检诊断工具与录入工具：
 
 ```bash
 # 运行单元测试
@@ -56,6 +56,12 @@ swift test
 
 # 运行硬件诊断工具（自动测试可见光、红外切换并保存测试图像至 Tests/Snapshots/，随后安全复位）
 swift run MacHelloDoctor
+
+# 运行人体存在感应监控（实时检测是否有人，有人时自动弹出 macOS 桌面横幅通知）
+swift run MacHelloPresence
+
+# 运行仿 iPhone 面容 ID 红外录入向导（支持戴镜常规外观 + 脱镜替用外观两轮录入）
+swift run MacHelloEnroll
 ```
 
 ---

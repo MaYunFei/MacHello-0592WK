@@ -15,6 +15,14 @@ let package = Package(
             name: "MacHelloDoctor",
             targets: ["MacHelloDoctor"]
         ),
+        .executable(
+            name: "MacHelloPresence",
+            targets: ["MacHelloPresence"]
+        ),
+        .executable(
+            name: "MacHelloEnroll",
+            targets: ["MacHelloEnroll"]
+        ),
         .library(
             name: "MacHelloCore",
             targets: ["MacHelloCore"]
@@ -38,7 +46,9 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreMedia"),
-                .linkedFramework("CoreVideo")
+                .linkedFramework("CoreVideo"),
+                .linkedFramework("Vision"),
+                .linkedFramework("UserNotifications")
             ]
         ),
         .executableTarget(
@@ -50,6 +60,16 @@ let package = Package(
             name: "MacHelloDoctor",
             dependencies: ["MacHelloCore"],
             path: "Sources/MacHelloDoctor"
+        ),
+        .executableTarget(
+            name: "MacHelloPresence",
+            dependencies: ["MacHelloCore"],
+            path: "Sources/MacHelloPresence"
+        ),
+        .executableTarget(
+            name: "MacHelloEnroll",
+            dependencies: ["MacHelloCore"],
+            path: "Sources/MacHelloEnroll"
         ),
         .testTarget(
             name: "MacHelloTests",
