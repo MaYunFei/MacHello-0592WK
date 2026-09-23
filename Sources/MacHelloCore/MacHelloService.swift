@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 import CIOKitHelper
 import ServiceManagement
 
@@ -96,14 +97,27 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public func togglePAMInstallation() {
         if isPAMInstalled {
             let res = PAMManager.shared.uninstallViaGUI()
-            if res.success {
-                self.isPAMInstalled = false
+            self.isPAMInstalled = PAMManager.shared.isInstalled
+            if !res.success, let err = res.error, !err.contains("取消") {
+                showSimpleAlert(title: "卸载 Sudo 刷脸提权失败", message: err)
             }
         } else {
             let res = PAMManager.shared.installViaGUI()
-            if res.success {
-                self.isPAMInstalled = true
+            self.isPAMInstalled = PAMManager.shared.isInstalled
+            if !res.success, let err = res.error, !err.contains("取消") {
+                showSimpleAlert(title: "配置 Sudo 刷脸提权失败", message: err)
             }
+        }
+    }
+
+    private func showSimpleAlert(title: String, message: String) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = message
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "好的")
+            alert.runModal()
         }
     }
 

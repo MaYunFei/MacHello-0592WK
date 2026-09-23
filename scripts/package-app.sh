@@ -99,7 +99,8 @@ echo "✅ [5/5] 打包成功: $APP_DIR"
 # 5. 可选：安装到 /Applications
 if [ "$1" == "--install" ] || [ "$1" == "-i" ]; then
     echo "🚀 正在将应用安装到系统 /Applications 目录..."
-    pkill -f "MacHello" 2>/dev/null || true
+    killall MacHello 2>/dev/null || true
+    sleep 0.5
     rm -rf "/Applications/$APP_NAME"
     cp -R "$APP_DIR" "/Applications/"
     echo "======================================================"
