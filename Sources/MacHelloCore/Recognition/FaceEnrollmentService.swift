@@ -170,11 +170,13 @@ public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
         case .center:
             return abs(face.yaw) < 0.20 && abs(face.pitch) < 0.20
         case .turnLeft:
-            return face.yaw < -0.20
+            // 用户向自身左侧转头时，Apple Vision 检测到的 yaw 为正值 (> +0.18)
+            return face.yaw > 0.18
         case .turnRight:
-            return face.yaw > 0.20
+            // 用户向自身右侧转头时，Apple Vision 检测到的 yaw 为负值 (< -0.18)
+            return face.yaw < -0.18
         case .tiltUp:
-            return face.pitch > 0.18
+            return face.pitch > 0.16
         }
     }
 
