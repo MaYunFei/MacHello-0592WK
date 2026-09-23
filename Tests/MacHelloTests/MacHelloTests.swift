@@ -77,4 +77,17 @@ final class MacHelloTests: XCTestCase {
         mgr.addObserver(obs)
         XCTAssertFalse(obs.stateChanged)
     }
+
+    func testHandGestureDetectorInit() {
+        let detector = HandGestureDetector.shared
+        XCTAssertNotNil(detector)
+
+        // Verify all gesture types exist
+        let allTypes = HandGestureType.allCases
+        XCTAssertTrue(allTypes.contains(.openPalm))
+        XCTAssertTrue(allTypes.contains(.indexFingerUp))
+        XCTAssertTrue(allTypes.contains(.fist))
+        XCTAssertTrue(allTypes.contains(.victory))
+        XCTAssertTrue(allTypes.contains(.thumbsUp))
+    }
 }

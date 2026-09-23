@@ -78,7 +78,27 @@ struct MacHelloApp: App {
 
                 Divider()
 
-                // 3. 面容录入与硬件功能
+                // 3. 隔空手势交互
+                Button(action: {
+                    service.toggleAirGestures()
+                }) {
+                    Text(service.isAirGesturesEnabled ? "✓ 隔空手势 (Air Gestures)" : "   隔空手势 (Air Gestures)")
+                }
+                .disabled(!service.isDeviceConnected)
+
+                if service.isAirGesturesEnabled {
+                    Menu("支持的手势与指令") {
+                        Text("✋ 手掌前推 ➔ 立即息屏")
+                        Text("☝️ 竖起食指 ➔ 切换静音")
+                        Text("✊ 握拳 ➔ 播放/暂停音乐")
+                        Text("✌️ 剪刀手 ➔ 桌面截屏")
+                        Text("👍 点赞 ➔ 互动反馈")
+                    }
+                }
+
+                Divider()
+
+                // 4. 面容录入与硬件功能
                 Button(action: {
                     service.refreshStatus()
                     EnrollmentWindowController.shared.showWindow()

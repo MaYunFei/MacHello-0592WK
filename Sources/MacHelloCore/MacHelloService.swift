@@ -18,10 +18,15 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isPersonPresent: Bool = false
     @Published public var isOwnerVerified: Bool = false
 
+    // 隔空手势状态
+    @Published public var isAirGesturesEnabled: Bool = true
+    @Published public var lastTriggeredGesture: HandGestureType = .none
+
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
     private let autoDisplayService = PresenceAutoDisplayService.shared
     private let displayManager = DisplayPowerManager.shared
+    private let gestureManager = GestureActionManager.shared
 
     public init() {
         displayManager.addObserver(self)
@@ -29,6 +34,13 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
+        self.isAirGesturesEnabled = gestureManager.isEnabled
+
+        gestureManager.onGestureTriggered = { [weak self] gesture in
+            DispatchQueue.main.async {
+                self?.lastTriggeredGesture = gesture
+            }
+        }
 
         autoDisplayService.onStateUpdated = { [weak self] isEnabled, isPresent, isOwner, isDisplayAsleep in
             DispatchQueue.main.async {
@@ -56,6 +68,13 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.absenceTimeout = autoDisplayService.absenceTimeout
+        self.isAirGesturesEnabled = gestureManager.isEnabled
+    }
+
+    public func toggleAirGestures() {
+        let newState = !isAirGesturesEnabled
+        gestureManager.isEnabled = newState
+        self.isAirGesturesEnabled = newState
     }
 
     public func toggleAutoDisplay() {
