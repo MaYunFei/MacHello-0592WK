@@ -70,7 +70,11 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         } else {
             stopMonitoring()
         }
-        onStateUpdated?(enabled, isPersonPresent, isOwnerVerified, displayManager.isDisplayAsleep)
+        emitStateChange()
+    }
+
+    private func emitStateChange() {
+        onStateUpdated?(isEnabled, isPersonPresent, isOwnerVerified, displayManager.isDisplayAsleep)
     }
 
     public func startMonitoring() {
@@ -117,7 +121,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             if elapsed >= absenceTimeout {
                 // 走开超时，执行息屏
                 displayManager.sleepDisplay()
-                onStateUpdated?(isEnabled, isPersonPresent, isOwnerVerified, true)
+                emitStateChange()
             }
         }
     }
@@ -164,6 +168,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     }
 
     private func handleOwnerPresent(score: Float) {
+        let changed = (!isPersonPresent || !isOwnerVerified)
         isPersonPresent = true
         isOwnerVerified = true
         lastSeenOwnerTime = Date()
@@ -171,24 +176,31 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         // 如果屏幕已息屏，机主出现立刻点亮屏幕！
         if displayManager.isDisplayAsleep {
             displayManager.wakeDisplay()
-            onStateUpdated?(isEnabled, true, true, false)
-        } else {
-            onStateUpdated?(isEnabled, true, true, false)
+            emitStateChange()
+        } else if changed {
+            // 只有当状态真正发生转变时（例如从无人/陌生人变为机主），才通知 UI 刷新，坚决不每帧刷新！
+            emitStateChange()
         }
     }
 
     private func handleStrangerPresent() {
+        let changed = (!isPersonPresent || isOwnerVerified)
         isPersonPresent = true
         isOwnerVerified = false
 
-        // 如果屏幕黑屏中，检测到陌生人则坚决保持黑屏（不调用 wakeDisplay）
-        onStateUpdated?(isEnabled, true, false, displayManager.isDisplayAsleep)
+        if changed {
+            emitStateChange()
+        }
     }
 
     private func handleNoPerson() {
+        let changed = (isPersonPresent || isOwnerVerified)
         isPersonPresent = false
         isOwnerVerified = false
-        onStateUpdated?(isEnabled, false, false, displayManager.isDisplayAsleep)
+
+        if changed {
+            emitStateChange()
+        }
     }
 
     // MARK: - PresenceDetectorDelegate (通用回退模式)
@@ -197,6 +209,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling else { return }
         guard !requireOwnerVerification || !faceDb.isEnrolled else { return }
 
+        let changed = (isPersonPresent != isPresent)
         isPersonPresent = isPresent
         isOwnerVerified = false
 
@@ -204,12 +217,13 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             lastSeenOwnerTime = Date()
             if displayManager.isDisplayAsleep {
                 displayManager.wakeDisplay()
-                onStateUpdated?(isEnabled, true, false, false)
+                emitStateChange()
+            } else if changed {
+                emitStateChange()
             }
-        } else {
+        } else if changed {
             lastSeenOwnerTime = Date()
+            emitStateChange()
         }
-
-        onStateUpdated?(isEnabled, isPresent, false, displayManager.isDisplayAsleep)
     }
 }

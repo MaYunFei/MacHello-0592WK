@@ -32,10 +32,15 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
         autoDisplayService.onStateUpdated = { [weak self] isEnabled, isPresent, isOwner, isDisplayAsleep in
             DispatchQueue.main.async {
-                self?.isAutoDisplayEnabled = isEnabled
-                self?.isPersonPresent = isPresent
-                self?.isOwnerVerified = isOwner
-                self?.isDisplayAsleep = isDisplayAsleep
+                guard let self = self else { return }
+                var hasChange = false
+                if self.isAutoDisplayEnabled != isEnabled { self.isAutoDisplayEnabled = isEnabled; hasChange = true }
+                if self.isPersonPresent != isPresent { self.isPersonPresent = isPresent; hasChange = true }
+                if self.isOwnerVerified != isOwner { self.isOwnerVerified = isOwner; hasChange = true }
+                if self.isDisplayAsleep != isDisplayAsleep { self.isDisplayAsleep = isDisplayAsleep; hasChange = true }
+                if hasChange {
+                    self.objectWillChange.send()
+                }
             }
         }
 
@@ -85,7 +90,9 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
     public func displayPowerStateDidChange(isDisplayAsleep: Bool) {
         DispatchQueue.main.async {
-            self.isDisplayAsleep = isDisplayAsleep
+            if self.isDisplayAsleep != isDisplayAsleep {
+                self.isDisplayAsleep = isDisplayAsleep
+            }
         }
     }
 }
