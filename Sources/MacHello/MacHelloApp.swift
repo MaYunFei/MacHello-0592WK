@@ -188,6 +188,10 @@ struct MacHelloApp: App {
                     Button("🧪 测试管理员提权弹窗 (Face ID)...") {
                         service.triggerAdminPromptTest()
                     }
+
+                    Button("📸 查看人脸解锁抓拍审计相册...") {
+                        AuthAuditLogger.shared.openHistoryFolder()
+                    }
                 }
 
                 // 6. 开机自启动

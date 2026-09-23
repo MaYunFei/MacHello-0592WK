@@ -250,7 +250,14 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         for face in faces {
             let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
             if match.matched {
+                let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
                 print("[AutoAuth] ✓ 机主红外人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
+                AuthAuditLogger.shared.recordAuth(
+                    pixelBuffer: pixelBuffer,
+                    reason: reasonStr,
+                    score: match.highestScore,
+                    success: true
+                )
                 onAuthSucceeded()
                 return
             }

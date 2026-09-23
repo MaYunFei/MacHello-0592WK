@@ -121,6 +121,12 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
         for face in faces {
             let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
             if match.matched {
+                AuthAuditLogger.shared.recordAuth(
+                    pixelBuffer: pixelBuffer,
+                    reason: "terminal_sudo",
+                    score: match.highestScore,
+                    success: true
+                )
                 lock.lock()
                 isAuthenticated = true
                 isFinished = true
