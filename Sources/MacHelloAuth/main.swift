@@ -23,6 +23,29 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
             return false
         }
 
+        // 1. 权限预检：解决首次在此终端使用时弹窗等待用户点击而导致的“超时”问题
+        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        if authStatus == .notDetermined {
+            fputs("[MacHello] 首次在此应用中使用，请在弹出的系统对话框中点击「好」以允许摄像头...\n", stderr)
+            fflush(stderr)
+            let authSema = DispatchSemaphore(value: 0)
+            var accessGranted = false
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                accessGranted = granted
+                authSema.signal()
+            }
+            // 给予用户充裕时间（最多 30 秒）点击确认
+            _ = authSema.wait(timeout: .now() + 30.0)
+
+            guard accessGranted else {
+                fputs("[MacHello] 摄像头权限被拒绝，请在「系统设置 ➔ 隐私与安全性 ➔ 摄像头」中允许。\n", stderr)
+                return false
+            }
+        } else if authStatus == .denied || authStatus == .restricted {
+            fputs("[MacHello] 摄像头访问权限被拒绝，请在「系统设置 ➔ 隐私与安全性 ➔ 摄像头」中允许。\n", stderr)
+            return false
+        }
+
         // 确保退出时恢复 RGB，保护红外硬件
         defer {
             cleanup()
@@ -48,7 +71,7 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
 
         cameraService.delegate = self
 
-        // 超时定时器
+        // 2. 超时定时器（权限已具备，此时正式开始人脸识别计时）
         let timeoutResult = sema.wait(timeout: .now() + timeoutSeconds)
         if timeoutResult == .timedOut {
             lock.lock()
