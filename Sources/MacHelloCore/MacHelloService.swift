@@ -14,6 +14,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isAutoDisplayEnabled: Bool = false
     @Published public var requireOwnerVerification: Bool = true
     @Published public var isSmartIdlePowerSavingEnabled: Bool = true
+    @Published public var respectMediaPlayback: Bool = true
     @Published public var absenceTimeout: TimeInterval = 15.0
     @Published public var isDisplayAsleep: Bool = false
     @Published public var isPersonPresent: Bool = false
@@ -29,6 +30,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
+        self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
 
@@ -58,6 +60,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isAutoDisplayEnabled = autoDisplayService.isEnabled
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
+        self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
         self.absenceTimeout = autoDisplayService.absenceTimeout
     }
 
@@ -71,6 +74,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !isSmartIdlePowerSavingEnabled
         autoDisplayService.isSmartIdlePowerSavingEnabled = newState
         self.isSmartIdlePowerSavingEnabled = newState
+    }
+
+    public func toggleRespectMediaPlayback() {
+        let newState = !respectMediaPlayback
+        autoDisplayService.respectMediaPlayback = newState
+        self.respectMediaPlayback = newState
     }
 
     public func toggleRequireOwnerVerification() {

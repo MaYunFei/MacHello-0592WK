@@ -11,11 +11,13 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private let extractor = FaceFeatureExtractor.shared
     private let faceDb = FaceDatabase.shared
     private let idleMonitor = InputIdleMonitor.shared
+    private let mediaDetector = MediaActivityDetector.shared
 
     private let defaultsKeyEnabled = "com.machello.autoDisplayEnabled"
     private let defaultsKeyTimeout = "com.machello.absenceTimeout"
     private let defaultsKeyOwnerOnly = "com.machello.requireOwnerVerification"
     private let defaultsKeySmartIdle = "com.machello.smartIdlePowerSaving"
+    private let defaultsKeyRespectMedia = "com.machello.respectMediaPlayback"
 
     public var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: defaultsKeyEnabled) }
@@ -58,6 +60,19 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKeySmartIdle)
+        }
+    }
+
+    /// 视频/会议播放感知（观看 YouTube、B站、电影或开会时自动免打扰，不息屏不闪灯）
+    public var respectMediaPlayback: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeyRespectMedia) == nil {
+                return true // 默认开启
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeyRespectMedia)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyRespectMedia)
         }
     }
 
@@ -139,11 +154,29 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         if !displayManager.isDisplayAsleep {
             pulseCycleCounter = 0
 
+            // 1. 媒体播放 / 在线会议感知：若正在观看视频（YouTube/B站/电影）或开会
+            if respectMediaPlayback && mediaDetector.isPreventingDisplaySleep {
+                lastSeenOwnerTime = Date()
+                lastProbeSuccessTime = Date()
+                let changed = (!isPersonPresent || !isOwnerVerified)
+                isPersonPresent = true
+                isOwnerVerified = true
+
+                // 观影期间绝不闪灯打扰，彻底关闭相机，0% CPU
+                if captureService.isRunning {
+                    captureService.stop()
+                }
+                if changed {
+                    emitStateChange()
+                }
+                return
+            }
+
             if isSmartIdlePowerSavingEnabled {
                 let idle = idleMonitor.idleSeconds
                 let probeInterval = max(5.0, absenceTimeout - 4.0)
 
-                // 1. 如果用户正在操作键盘鼠标
+                // 2. 如果用户正在操作键盘鼠标
                 if idle < 3.0 {
                     lastSeenOwnerTime = Date()
                     lastProbeSuccessTime = Date()
@@ -161,24 +194,22 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                     return
                 }
 
-                // 2. 如果不久前刚刚通过摄像头确认过用户还在（比如过去 8 秒内刚探查过）
+                // 3. 如果不久前刚刚通过摄像头确认过用户还在（在过去 probeInterval 秒内已探查过）
                 let timeSinceLastProbe = Date().timeIntervalSince(lastProbeSuccessTime)
                 if timeSinceLastProbe < probeInterval {
-                    // 刚刚探查过机主在位，保持摄像头关闭（指示灯熄灭）
                     if captureService.isRunning {
                         captureService.stop()
                     }
                     return
                 }
 
-                // 3. 距离上次探查已超过 probeInterval，且用户没动键鼠
-                // 启动摄像头进行瞬时探查
+                // 4. 停手超时：启动摄像头进行瞬时探查（人在即灭）
                 if !captureService.isRunning {
                     try? captureService.start(mode: .rgb)
                     captureService.delegate = self
                 }
 
-                // 4. 检查是否达到离席超时上限
+                // 5. 检查是否达到离席超时上限
                 let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
                 if elapsed >= absenceTimeout {
                     // 确认无人，立即息屏
@@ -332,7 +363,6 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 emitStateChange()
             }
 
-            // 通用模式下确认人在位也立即关相机熄灯
             if !displayManager.isDisplayAsleep && isSmartIdlePowerSavingEnabled {
                 if captureService.isRunning {
                     captureService.stop()

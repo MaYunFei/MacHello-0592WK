@@ -54,6 +54,14 @@ struct MacHelloApp: App {
                         Text(prefix + "智能键鼠感知 (打字时熄灯，0% CPU)")
                     }
 
+                    // 观影/会议免打扰
+                    Button(action: {
+                        service.toggleRespectMediaPlayback()
+                    }) {
+                        let prefix = service.respectMediaPlayback ? "✓ " : "   "
+                        Text(prefix + "视频观影/在线会议免打扰 (不熄屏不闪灯)")
+                    }
+
                     // 离席息屏时长选择子菜单
                     Menu("离席等待时长") {
                         Button(action: { service.setAbsenceTimeout(10) }) {
