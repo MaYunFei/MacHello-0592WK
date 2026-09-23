@@ -25,7 +25,8 @@ final class DoctorDelegate: CameraCaptureDelegate {
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         frameCount += 1
 
-        if captureNext && frameCount > 10 {
+        let requiredFrames = isIRCurrent ? 25 : 10
+        if captureNext && frameCount > requiredFrames {
             captureNext = false
             saveSnapshot(sampleBuffer, filename: currentFilename, label: currentLabel, isIR: isIRCurrent)
             sema?.signal()

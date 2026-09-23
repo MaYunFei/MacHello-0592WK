@@ -12,6 +12,7 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
     private let sema = DispatchSemaphore(value: 0)
     private var isAuthenticated = false
     private var isFinished = false
+    private var frameCount = 0
     private let lock = NSLock()
 
     var timeoutSeconds: TimeInterval = 2.5
@@ -106,6 +107,12 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
             return
         }
         lock.unlock()
+
+        frameCount += 1
+        // IR 模式下，前 8 帧让传感器夜视自动曝光增益 (AEC/AGC) 充分升起，避开启动初始的黑帧
+        if isIR && frameCount < 8 {
+            return
+        }
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
