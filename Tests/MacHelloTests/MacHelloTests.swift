@@ -89,5 +89,22 @@ final class MacHelloTests: XCTestCase {
         XCTAssertTrue(allTypes.contains(.fist))
         XCTAssertTrue(allTypes.contains(.victory))
         XCTAssertTrue(allTypes.contains(.thumbsUp))
+        XCTAssertTrue(allTypes.contains(.fingerHeart))
+        XCTAssertTrue(allTypes.contains(.swipeLeft))
+        XCTAssertTrue(allTypes.contains(.swipeRight))
+    }
+
+    func testGestureConfigManagerDefaults() {
+        let config = GestureConfigManager.shared
+        let palmRule = config.rule(for: .openPalm)
+        XCTAssertEqual(palmRule.action, .sleepDisplay)
+
+        let fistRule = config.rule(for: .fist)
+        XCTAssertEqual(fistRule.action, .mediaPlayPause)
+    }
+
+    func testInputIdleMonitor() {
+        let idle = InputIdleMonitor.shared.idleSeconds
+        XCTAssertGreaterThanOrEqual(idle, 0.0)
     }
 }

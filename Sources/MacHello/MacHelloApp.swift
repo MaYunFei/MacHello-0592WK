@@ -87,12 +87,23 @@ struct MacHelloApp: App {
                 .disabled(!service.isDeviceConnected)
 
                 if service.isAirGesturesEnabled {
-                    Menu("支持的手势与指令") {
-                        Text("✋ 手掌前推 ➔ 立即息屏")
-                        Text("☝️ 竖起食指 ➔ 切换静音")
-                        Text("✊ 握拳 ➔ 播放/暂停音乐")
-                        Text("✌️ 剪刀手 ➔ 桌面截屏")
-                        Text("👍 点赞 ➔ 互动反馈")
+                    Button(action: {
+                        GestureSettingsWindowController.shared.showWindow()
+                    }) {
+                        Label("自定义手势与快捷行为...", systemImage: "slider.horizontal.3")
+                    }
+
+                    Menu("已支持的手势一览") {
+                        Text("✋ 手掌前推 (默认: 立即息屏)")
+                        Text("☝️ 竖起食指 (默认: 切换静音)")
+                        Text("✊ 隔空握拳 (默认: 播放/暂停)")
+                        Text("👈 向左横扫 (默认: 下一曲)")
+                        Text("👉 向右横扫 (默认: 上一曲)")
+                        Text("👆 向上划动 (默认: 调度中心)")
+                        Text("🔄 空中画圈 (默认: 调高音量)")
+                        Text("🫰 捏指比心 (默认: 启动音乐)")
+                        Text("✌️ 剪刀手 (默认: 桌面截屏)")
+                        Text("👍 点赞 (互动反馈)")
                     }
                 }
 

@@ -5,11 +5,12 @@ public final class GestureActionManager: NSObject, HandGestureDetectorDelegate {
     public static let shared = GestureActionManager()
 
     private let defaultsKeyEnabled = "com.machello.airGesturesEnabled"
+    private let config = GestureConfigManager.shared
 
     public var isEnabled: Bool {
         get {
             if UserDefaults.standard.object(forKey: defaultsKeyEnabled) == nil {
-                return true // 默认开启隔空手势
+                return true
             }
             return UserDefaults.standard.bool(forKey: defaultsKeyEnabled)
         }
@@ -18,7 +19,8 @@ public final class GestureActionManager: NSObject, HandGestureDetectorDelegate {
         }
     }
 
-    public var onGestureTriggered: ((HandGestureType) -> Void)?
+    public var onGestureTriggered: ((HandGestureType, GestureActionType) -> Void)?
+    public var onLiveGestureDetected: ((HandGestureType) -> Void)?
 
     private override init() {
         super.init()
@@ -29,54 +31,99 @@ public final class GestureActionManager: NSObject, HandGestureDetectorDelegate {
 
     public func handGestureDetector(_ detector: HandGestureDetector, didTrigger gesture: HandGestureType) {
         guard isEnabled else { return }
-
-        // 如果屏幕处于息屏状态，忽略手势（除人脸亮屏外）
         guard !DisplayPowerManager.shared.isDisplayAsleep else { return }
 
-        executeAction(for: gesture)
-        onGestureTriggered?(gesture)
+        let rule = config.rule(for: gesture)
+        guard rule.action != .none else { return }
+
+        executeAction(rule.action, appName: rule.appName, gesture: gesture)
+        onGestureTriggered?(gesture, rule.action)
     }
 
-    public func executeAction(for gesture: HandGestureType) {
-        switch gesture {
-        case .openPalm:
-            // ✋ 手掌前推 ➔ 立即息屏
+    public func handGestureDetector(_ detector: HandGestureDetector, didTrackLive gesture: HandGestureType) {
+        guard isEnabled else { return }
+        onLiveGestureDetected?(gesture)
+    }
+
+    public func executeAction(_ action: GestureActionType, appName: String = "Music", gesture: HandGestureType) {
+        switch action {
+        case .none:
+            break
+
+        case .sleepDisplay:
             NSSound(named: "Pop")?.play()
             DisplayPowerManager.shared.sleepDisplay()
-            SystemNotifier.shared.postNotification(title: "隔空手势 ✋", body: "检测到手掌手势，已关闭显示器息屏")
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 已执行息屏")
 
-        case .indexFingerUp:
-            // ☝️ 竖起食指 ➔ 切换系统静音
-            NSSound(named: "Tink")?.play()
+        case .lockScreen:
+            NSSound(named: "Pop")?.play()
             DispatchQueue.global(qos: .userInitiated).async {
-                let script = "set volume output muted not (output muted of (get volume settings))"
                 let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-                proc.arguments = ["-e", script]
+                proc.executableURL = URL(fileURLWithPath: "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession")
+                proc.arguments = ["-suspend"]
                 try? proc.run()
             }
-            SystemNotifier.shared.postNotification(title: "隔空手势 ☝️", body: "检测到食指手势，已切换系统静音")
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 锁定屏幕")
 
-        case .fist:
-            // ✊ 握拳 ➔ 播放 / 暂停媒体
+        case .toggleMute:
             NSSound(named: "Tink")?.play()
+            runAppleScript("set volume output muted not (output muted of (get volume settings))")
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 切换静音")
+
+        case .mediaPlayPause:
+            NSSound(named: "Tink")?.play()
+            let script = """
+            if application "Music" is running then
+                tell application "Music" to playpause
+            else if application "Spotify" is running then
+                tell application "Spotify" to playpause
+            end if
+            """
+            runAppleScript(script)
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 播放/暂停音乐")
+
+        case .mediaNext:
+            NSSound(named: "Tink")?.play()
+            let script = """
+            if application "Music" is running then
+                tell application "Music" to next track
+            else if application "Spotify" is running then
+                tell application "Spotify" to next track
+            end if
+            """
+            runAppleScript(script)
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 下一曲")
+
+        case .mediaPrevious:
+            NSSound(named: "Tink")?.play()
+            let script = """
+            if application "Music" is running then
+                tell application "Music" to previous track
+            else if application "Spotify" is running then
+                tell application "Spotify" to previous track
+            end if
+            """
+            runAppleScript(script)
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 上一曲")
+
+        case .volumeUp:
+            NSSound(named: "Tink")?.play()
+            runAppleScript("set volume output volume ((output volume of (get volume settings)) + 6)")
+
+        case .volumeDown:
+            NSSound(named: "Tink")?.play()
+            runAppleScript("set volume output volume ((output volume of (get volume settings)) - 6)")
+
+        case .missionControl:
+            NSSound(named: "Pop")?.play()
             DispatchQueue.global(qos: .userInitiated).async {
-                let script = """
-                if application "Music" is running then
-                    tell application "Music" to playpause
-                else if application "Spotify" is running then
-                    tell application "Spotify" to playpause
-                end if
-                """
                 let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-                proc.arguments = ["-e", script]
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                proc.arguments = ["-a", "Mission Control"]
                 try? proc.run()
             }
-            SystemNotifier.shared.postNotification(title: "隔空手势 ✊", body: "检测到握拳手势，已切换音乐播放/暂停")
 
-        case .victory:
-            // ✌️ 剪刀手 ➔ 截取屏幕存至桌面
+        case .screenshot:
             NSSound(named: "Glass")?.play()
             DispatchQueue.global(qos: .userInitiated).async {
                 let dateStr = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
@@ -86,15 +133,27 @@ public final class GestureActionManager: NSObject, HandGestureDetectorDelegate {
                 proc.arguments = ["-x", path]
                 try? proc.run()
             }
-            SystemNotifier.shared.postNotification(title: "隔空手势 ✌️", body: "检测到剪刀手，已截屏保存至桌面")
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 截图已保存至桌面")
 
-        case .thumbsUp:
-            // 👍 点赞
+        case .launchApp:
             NSSound(named: "Hero")?.play()
-            SystemNotifier.shared.postNotification(title: "隔空手势 👍", body: "收到点赞！祝你工作愉快！")
+            let target = appName.isEmpty ? "Music" : appName
+            DispatchQueue.global(qos: .userInitiated).async {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                proc.arguments = ["-a", target]
+                try? proc.run()
+            }
+            SystemNotifier.shared.postNotification(title: "隔空手势触发", body: "\(gesture.displayName) ➔ 启动应用 \(target)")
+        }
+    }
 
-        case .none:
-            break
+    private func runAppleScript(_ script: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            proc.arguments = ["-e", script]
+            try? proc.run()
         }
     }
 }

@@ -20,7 +20,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
     // 隔空手势状态
     @Published public var isAirGesturesEnabled: Bool = true
-    @Published public var lastTriggeredGesture: HandGestureType = .none
+    @Published public var lastTriggeredGesture: HandGestureType? = nil
 
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
@@ -36,7 +36,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isDisplayAsleep = displayManager.isDisplayAsleep
         self.isAirGesturesEnabled = gestureManager.isEnabled
 
-        gestureManager.onGestureTriggered = { [weak self] gesture in
+        gestureManager.onGestureTriggered = { [weak self] gesture, _ in
             DispatchQueue.main.async {
                 self?.lastTriggeredGesture = gesture
             }
