@@ -160,6 +160,18 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private func checkAbsenceStatus() {
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling, !isDiagnosticRunning else { return }
 
+        // 硬件连接断开保护 (Fail-Safe Guard)：
+        // 若摄像头已被用户物理拔出或未就绪，绝不强行熄屏！
+        // 自动安全挂起，将屏幕显示保持点亮状态，交由 macOS 原生电源管理托管
+        guard irController.isConnected else {
+            lastSeenOwnerTime = Date()
+            lastProbeSuccessTime = Date()
+            if captureService.isRunning {
+                captureService.stop()
+            }
+            return
+        }
+
         // 情况一：屏幕当前处于点亮工作状态
         if !displayManager.isDisplayAsleep {
             pulseCycleCounter = 0

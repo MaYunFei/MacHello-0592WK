@@ -178,6 +178,10 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         authQueue.async { [weak self] in
             guard let self = self else { return }
             guard !self.isAuthenticating else { return }
+            guard self.irController.isConnected else {
+                print("[AutoAuth] 摄像头已拔出或未连接，跳过自动核验")
+                return
+            }
             guard self.keychain.hasPassword() else {
                 print("[AutoAuth] 钥匙串中未保存密码，跳过自动填入")
                 return

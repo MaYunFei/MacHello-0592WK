@@ -99,6 +99,8 @@
      - 人脸模型库：`~/.machello/faces.json`
      - 通行审计日志与抓拍：`~/.machello/history/`（滚动最多 50 张）
      - 硬件自检与诊断输出：`~/.machello/diagnostics/`
+6. **物理热拔断连容错 (Fail-Safe Disconnect Guard)**：
+   - 当 `!irController.isConnected` 时，`checkAbsenceStatus` 必须无条件跳过熄屏逻辑，并不断刷新 `lastSeenOwnerTime`，严禁在无摄像头状态下锁死或息屏用户屏幕。系统平滑降级，交还 macOS 原生电源管理。
 
 ---
 
