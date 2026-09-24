@@ -10,14 +10,24 @@ public struct FaceFeatureResult {
     public let roll: Float // 左右歪头角度
     public let embedding: [Float] // 128 维特征向量
     public let confidence: Float
+    public let landmarks: [CGPoint] // 关键点 (全图归一化坐标 0.0~1.0, 原点左下角)
 
-    public init(boundingBox: CGRect, yaw: Float, pitch: Float, roll: Float, embedding: [Float], confidence: Float) {
+    public init(
+        boundingBox: CGRect,
+        yaw: Float,
+        pitch: Float,
+        roll: Float,
+        embedding: [Float],
+        confidence: Float,
+        landmarks: [CGPoint] = []
+    ) {
         self.boundingBox = boundingBox
         self.yaw = yaw
         self.pitch = pitch
         self.roll = roll
         self.embedding = embedding
         self.confidence = confidence
+        self.landmarks = landmarks
     }
 }
 
@@ -55,15 +65,17 @@ public final class FaceFeatureExtractor {
     }
 
     private func performExtraction(handler: VNImageRequestHandler, request: VNRequest) -> [FaceFeatureResult] {
+        let landmarksReq = VNDetectFaceLandmarksRequest()
         do {
-            try handler.perform([request])
+            try handler.perform([request, landmarksReq])
             guard let observations = request.results as? [VNFaceObservation] else {
                 return []
             }
 
+            let landmarkObs = landmarksReq.results ?? []
             var results: [FaceFeatureResult] = []
 
-            for obs in observations {
+            for (index, obs) in observations.enumerated() {
                 // 1. 获取朝向角度 (弧度)
                 let yaw = (obs.yaw?.floatValue) ?? 0.0
                 let pitch = (obs.pitch?.floatValue) ?? 0.0
@@ -78,13 +90,27 @@ public final class FaceFeatureExtractor {
                 let floats = data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
                 guard floats.count == 128 else { continue }
 
+                // 3. 提取 2D 关键点
+                let matchedObs = (index < landmarkObs.count) ? landmarkObs[index] : obs
+                var points: [CGPoint] = []
+                if let lm = matchedObs.landmarks ?? obs.landmarks, let all = lm.allPoints {
+                    let bbox = matchedObs.boundingBox
+                    points = all.normalizedPoints.map { pt in
+                        CGPoint(
+                            x: bbox.origin.x + pt.x * bbox.size.width,
+                            y: bbox.origin.y + pt.y * bbox.size.height
+                        )
+                    }
+                }
+
                 let result = FaceFeatureResult(
                     boundingBox: obs.boundingBox,
                     yaw: yaw,
                     pitch: pitch,
                     roll: roll,
                     embedding: floats,
-                    confidence: obs.confidence
+                    confidence: obs.confidence,
+                    landmarks: points
                 )
                 results.append(result)
             }

@@ -95,4 +95,22 @@ final class MacHelloTests: XCTestCase {
         mgr.addObserver(obs)
         XCTAssertFalse(obs.stateChanged)
     }
+
+    func testFaceFeatureExtractorLandmarks() throws {
+        guard let image = NSImage(contentsOfFile: "Tests/Snapshots/snapshot_ir.jpg"),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            throw XCTSkip("Snapshot file not found")
+        }
+
+        let extractor = FaceFeatureExtractor.shared
+        let results = extractor.extract(from: cgImage)
+        XCTAssertFalse(results.isEmpty, "Should detect at least one face in the snapshot")
+
+        if let face = results.first {
+            XCTAssertEqual(face.embedding.count, 128, "Embedding dimension should be 128")
+            XCTAssertFalse(face.landmarks.isEmpty, "Face landmarks should be detected")
+            print("Detected \(face.landmarks.count) landmarks on snapshot face")
+            XCTAssertGreaterThanOrEqual(face.landmarks.count, 60, "Landmarks should have rich detail (> 60 points)")
+        }
+    }
 }

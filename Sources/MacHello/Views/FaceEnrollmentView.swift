@@ -10,6 +10,7 @@ final class EnrollmentViewModel: ObservableObject, FaceEnrollmentDelegate {
     @Published var progress: Double = 0.0
     @Published var instruction: String = "👀 请正视摄像头，保持平视"
     @Published var isMatchingCurrentPose: Bool = false
+    @Published var isPoseFrozen: Bool = false
     @Published var showAlternativePrompt: Bool = false
     @Published var isFinished: Bool = false
     @Published var totalSamplesCount: Int = 0
@@ -66,8 +67,13 @@ final class EnrollmentViewModel: ObservableObject, FaceEnrollmentDelegate {
 
     func enrollmentDidCapturePose(stage: EnrollmentStage, pose: TargetPose) {
         DispatchQueue.main.async {
-            NSSound.beep()
             self.completedPoses.insert(pose)
+        }
+    }
+
+    func enrollmentPoseDidFreeze(stage: EnrollmentStage, pose: TargetPose, isFreezing: Bool) {
+        DispatchQueue.main.async {
+            self.isPoseFrozen = isFreezing
         }
     }
 
@@ -187,35 +193,55 @@ struct FaceEnrollmentView: View {
                         )
                 }
 
-                // 3. 匹配时的高亮发光环
-                if viewModel.isMatchingCurrentPose {
-                    Circle()
-                        .stroke(Color.green.opacity(0.7), lineWidth: 4)
-                        .frame(width: 224, height: 224)
-                        .blur(radius: 2)
+                // 3. 匹配时的高亮发光环 (采用平滑不透明度渐变，杜绝节点反复创建/销毁引发的 UI 闪烁)
+                Circle()
+                    .stroke(Color.green.opacity(0.8), lineWidth: 4)
+                    .frame(width: 224, height: 224)
+                    .blur(radius: 2)
+                    .opacity(viewModel.isMatchingCurrentPose ? 1.0 : 0.0)
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.isMatchingCurrentPose)
+
+                // 4. 定格成功浮层微标
+                if viewModel.isPoseFrozen {
+                    VStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(.green)
+                            .shadow(color: .black.opacity(0.7), radius: 6)
+                        Text("角度已捕获")
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.8), radius: 4)
+                    }
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
 
             Spacer()
 
-            // 底部指示文案
+            // 底部指示文案 (ZStack 固定高度布局，杜绝高度/文字突变跳动导致的闪烁)
             VStack(spacing: 10) {
                 Text(viewModel.instruction)
                     .font(.title3)
                     .fontWeight(.semibold)
                     .multilineTextAlignment(.center)
                     .foregroundColor(viewModel.isMatchingCurrentPose ? .green : .primary)
-                    .animation(.easeInOut(duration: 0.2), value: viewModel.isMatchingCurrentPose)
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.isMatchingCurrentPose)
 
-                if viewModel.isMatchingCurrentPose {
-                    Text("保持当前姿势...")
+                ZStack {
+                    Text(viewModel.isPoseFrozen ? "✅ 角度捕获成功，定格中..." : "✓ 保持当前姿势，正在提取特征...")
                         .font(.subheadline)
                         .foregroundColor(.green)
-                } else {
+                        .opacity((viewModel.isMatchingCurrentPose || viewModel.isPoseFrozen) ? 1.0 : 0.0)
+
                     Text("请缓慢转动面部，配合指示")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                        .opacity((!viewModel.isMatchingCurrentPose && !viewModel.isPoseFrozen) ? 1.0 : 0.0)
                 }
+                .animation(.easeInOut(duration: 0.25), value: viewModel.isMatchingCurrentPose)
+                .animation(.easeInOut(duration: 0.25), value: viewModel.isPoseFrozen)
             }
             .frame(height: 60)
 
