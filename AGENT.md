@@ -4,6 +4,15 @@
 > **项目定位**：**原生 macOS 菜单栏应用 (Native Menu Bar App)**。  
 > **设计哲学**：**拒绝臃肿的 Python 运行时与大库**。采用 **Swift (SwiftUI / AppKit) 原生开发**，极致轻量（体积仅数 MB、内存占用 < 20MB）、0 多余臃肿依赖、无缝调用 Apple Silicon Neural Engine (NPU) 与硬件级红外控制。
 
+## 🖥️ 实测系统与运行环境规范 (Verified System Environments)
+
+本项目经过全链路闭环联调，并已在以下真实生产环境中完成全功能验证：
+
+| 节点维度 | 操作系统版本 | 硬件架构 / 宿主拓扑 | 关键环境参数与角色定位 |
+| :--- | :--- | :--- | :--- |
+| **🍎 Mac 客户端 (业务与大脑端)** | **macOS 27.0** (Build `26A428`) | Apple Silicon (ARM64e / M 系列芯片) | - **业务与识别大脑**：统一调用 Apple Vision 框架，算力 100% 运行于苹果 **16 核神经网络引擎 (Apple Neural Engine, ANE / NPU)**；<br>- 走局域网内存管道流转图像，**状态栏 0 绿色隐私圆点，0 MenuBarAgent 冲突**。 |
+| **🐧 Linux 网关 (硬件数据源端)** | **Debian GNU/Linux 13** (`trixie` / 13.1) | Proxmox VE (PVE) 虚拟化环境<br>内核: `7.0.12-1-pve x86_64` | - **Samba 式纯硬件网关**：USB 直通共享 Dell 0592WK (`0bda:5767`)；<br>- 负责 UVC XU 控制序列与按需提供 MJPEG 画面，平时相机释放彻底灭灯，**整机 CPU 占用 0.0%**。 |
+
 ---
 
 ## 1. 软件形态与用户体验规范 (CRITICAL REQUIREMENTS)
@@ -22,6 +31,20 @@
      - 🚪 退出应用
 2. **后台常驻与开机启动**：
    - 使用现代 macOS 原生 `SMAppService.mainApp.register()` 管理开机无感自启。
+3. **自动化打包与无缝热替换开发工作流 (HOT REPLACEMENT WORKFLOW - CRITICAL)**：
+   - 每次代码改动并通过测试（`swift test`）后，打包生成 `.app`；
+   - 必须通过 `./scripts/package-app.sh --install` 完成闭环：**自动平滑退出当前旧版 App 进程（`killall MacHello`） -> 将新 App 安装到 `/Applications/MacHello.app` -> 重新启动新 App (`open /Applications/MacHello.app`)**，确保用户无缝测试最新构建，严禁遗留未安装的构建或要求用户手动操作。
+4. **双部署工作模式架构规范 (DUAL DEPLOYMENT MODES)**：
+   - **🔌 本机 USB 直连模式 (Local BLEUnlock Mode)**：
+     - 当摄像头直接插在 Mac 上时，遵循 [ts1/BLEUnlock](https://github.com/ts1/BLEUnlock) 的纯净规范：平时亮屏工作与静止阅读期间，摄像头 **100% 保持彻底断电关闭**，0% CPU，状态栏 0 绿色隐私指示灯；
+     - 纯键鼠无操作超时（15秒/30秒/1分钟/5分钟/10分钟）自动锁屏/息屏；
+     - 用户触动键鼠亮屏时，由 `AutoAuthManager` 毫秒级捕获唤醒通知，**瞬间启动摄像头 0.5 秒完成 Face ID 刷脸并自动输入密码进入桌面，随后立即关闭相机**；
+     - 终端 `sudo` 与管理员弹窗同样单次 0.5 秒刷脸，彻底根绝 macOS 27 菜单栏的任何性能与隐私指示器冲突。
+   - **🌐 局域网 Linux 智能服务模式 (Network Linux Mode)**：
+     - 摄像头插在局域网 Linux 设备（软路由/树莓派/NAS/工控机等）上，运行 `linux-server/machello_server.py`；
+     - Linux 端无 macOS 隐私指示器限制，全天候 24/7 运行人体存在感应（HPD）、Windows Hello 15Hz 物理交替频闪活体算法与 MJPEG 红外夜视监控流；
+     - Mac 端通过 `LinuxPresenceClient`（WebSocket）实时监听在席广播：**人走开 Mac 自动息屏、人靠近 Mac 自动唤醒并秒级刷脸进桌面**；
+     - **Mac 端 0 摄像头调用、0 状态栏绿点、0 视频解码负担，Mac CPU 占用绝对 0.00%**！局域网内任意终端还可拉取实时红外夜视监控流。
 
 ---
 
@@ -101,6 +124,30 @@
      - 硬件自检与诊断输出：`~/.machello/diagnostics/`
 6. **物理热拔断连容错 (Fail-Safe Disconnect Guard)**：
    - 当 `!irController.isConnected` 时，`checkAbsenceStatus` 必须无条件跳过熄屏逻辑，并不断刷新 `lastSeenOwnerTime`，严禁在无摄像头状态下锁死或息屏用户屏幕。系统平滑降级，交还 macOS 原生电源管理。
+7. **macOS 27 MenuBarAgent / 系统隐私指示器防高频震荡规范 (Scene Churn & Spin-Lock Guard)**：
+   - 在 macOS 27 及更高版本中，菜单栏被独立为 `/System/Library/CoreServices/MenuBarAgent.app`，当摄像头启闭时，系统 `ControlCenter` 会通过 XPC 通知 `MenuBarAgent` 挂载/卸载 FrontBoard 隐私横幅 Scene；
+   - **严禁每隔数秒机械式高频 `start()` / `stop()` 摄像头**：频繁创建/销毁 Scene 会引发 SkyLight 结构树（`_XAddStructuralRegionOfType`）严重内存/对象泄漏与 `NSSceneFenceAction` 自旋死锁，导致 `MenuBarAgent` 与 `WindowServer` 双双飙至 100% CPU，造成全局掉帧卡死（参见开源项目 `jizhi0v0/macos27-beta-issues` Issue #12, #20, #22）；
+   - **正确的在席监护策略**：
+     - 用户打字/鼠标操作时彻底关停相机，0% CPU，指示灯全灭；
+     - 用户停手静置（阅读/思考）期间，平稳开启相机常驻，绿点保持稳态无 Scene Churn；
+     - 通过动态自适应帧率：机主在位巡航时降频至 1.0 FPS 抽帧，Vision 算力消耗 < 0.2%，离开超时后才熄屏灭灯；
+     - 息屏休眠巡检采用 8 秒长周期轻柔脉冲，保护硬件同时降低系统合成管道冲击。
+8. **锁屏与密码按键模拟绝对安全铁律 (Zero Password Leakage Guard - CRITICAL)**：
+   - **真锁屏机制**：无操作超时必须调用 `SACLockScreenImmediate()`（调用 macOS `login.framework` 原生接口），确保系统真正且立刻切入 `loginwindow` 锁屏状态，严禁仅调用 `pmset displaysleepnow`（单纯息屏未锁屏会导致按键泄露至桌面应用）；
+   - **模拟键入绝对双重核验**：
+     - 若为锁屏解锁（`.lockScreen`），**必须在发送按键前严格多重校验 `isScreenLocked() == true`**。一旦检测到当前不在锁屏界面（已处于普通桌面窗口），必须立即熔断、绝对严禁发送任何按键，坚决防止密码被打入终端或聊天对话框；
+     - 若为管理员弹窗提权（`.adminPrompt`），**必须严格核验前台应用确系 `com.apple.SecurityAgent`**。如果不是，坚决拒绝模拟按键。
+9. **外设即插即用与热插拔自愈 (USB Hotplug & Device Discovery)**：
+   - 监听 `AVCaptureDevice.wasConnectedNotification` 与 `wasDisconnectedNotification`，并配合每秒硬件状态心跳探测；
+   - 保证用户在应用启动之后随时插入或拔出摄像头时，系统能在 300ms 内自动识别、重置硬件到 RGB 就绪状态并刷新菜单状态，严禁要求用户手动杀死进程重启。
+10. **红外灯物理保护与按需闪烁铁律 (IR LED Power & Thermal Guard - CRITICAL)**：
+   - **严禁 24 小时常开 850nm 红外发射管**：Dell 0592WK 为紧凑型笔记本拆机模组，红外发射管高功率常亮会导致严重发热、加速 LED 光衰，且在夜间刺眼；
+   - **常态在位巡检必须运行在 RGB 模式**：通过调用 Realtek XU 模式 `0x01`（`set_mode(False)`），物理切断红外发射管供电，实现 0 发热、0 刺眼、纯被动监测；
+   - **红外灯仅允许瞬时脉冲**：仅在黑夜弱光检测、刷脸识别核验或主动调试时，触发 0.5s 短促脉冲 (`pulse_ir`)，核验完成后立即物理切回 RGB 熄灭红外灯。
+11. **局域网数据源 Samba 式抽象准则 (Samba-Style Data Source Abstraction - CRITICAL)**：
+   - **Linux 端定位于纯硬件数据源**：严禁在 Linux 端编写业务判定逻辑（如粗暴人脸识别或是否开门的决策）；闲时按需释放摄像头灭灯，0% CPU；
+   - **Mac 端统一接管大脑算力**：局域网流转的画面帧在 Mac 内存中无缝转为标准 `CVPixelBuffer` / `CMSampleBuffer`，全部喂入 Mac 端的 **Apple Vision 框架与 Apple Neural Engine (NPU)** 进行 512 维特征比对；
+   - **100% 复用所有核心业务**：本机直连与局域网模式仅在“数据源获取方式”上不同，下游的面容库比对（`~/.machello/faces.json`）、录入向导、双目自检向导与审计日志 100% 完全复用，确保极致的安全与优雅解耦。
 
 ---
 

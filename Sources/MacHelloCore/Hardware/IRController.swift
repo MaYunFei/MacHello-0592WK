@@ -14,7 +14,13 @@ public final class IRController {
 
     private init() {}
 
+    public var isNetworkMode: Bool = false
+    public var onNetworkSetMode: ((_ isIR: Bool) -> Void)?
+
     public var isConnected: Bool {
+        if isNetworkMode {
+            return true
+        }
         return dell_camera_is_connected()
     }
 
@@ -23,6 +29,12 @@ public final class IRController {
         guard isConnected else { return false }
         lock.lock()
         defer { lock.unlock() }
+
+        if isNetworkMode {
+            currentMode = mode
+            onNetworkSetMode?(mode == .ir)
+            return true
+        }
 
         if !force && currentMode == mode {
             return true // 已处于目标模式，跳过重复写入避免 Realtek RTS5822 状态机冲突

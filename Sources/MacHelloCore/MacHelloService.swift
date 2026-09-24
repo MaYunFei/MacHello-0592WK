@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import AVFoundation
 import CIOKitHelper
 import ServiceManagement
 
@@ -31,10 +32,17 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var hasStoredPassword: Bool = false
     @Published public var isAccessibilityTrusted: Bool = false
 
+    // 局域网 Linux 服务端模式
+    @Published public var isNetworkModeEnabled: Bool = false
+    @Published public var linuxServerURL: String = ""
+    @Published public var isLinuxConnected: Bool = false
+    @Published public var linuxLatencyMs: Int = 0
+
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
     private let autoDisplayService = PresenceAutoDisplayService.shared
     private let displayManager = DisplayPowerManager.shared
+    private let linuxClient = LinuxPresenceClient.shared
 
     public init() {
         displayManager.addObserver(self)
@@ -44,6 +52,27 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
+        self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
+        self.linuxServerURL = linuxClient.serverURLString
+        self.isLinuxConnected = linuxClient.isConnected
+        self.linuxLatencyMs = linuxClient.serverLatencyMs
+
+        // 彻底同步底层驱动的数据源状态 (Samba 模式与本机 USB 直插模式解耦)
+        self.cameraService.isNetworkMode = self.isNetworkModeEnabled
+        self.cameraService.networkServerURL = self.linuxServerURL
+        self.irController.isNetworkMode = self.isNetworkModeEnabled
+        self.irController.onNetworkSetMode = { [weak self] isIR in
+            self?.linuxClient.setIRMode(isIR: isIR)
+        }
+
+        linuxClient.onStatusChanged = { [weak self] isConnected, isPresent, isOwner in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isLinuxConnected = isConnected
+                self.linuxLatencyMs = self.linuxClient.serverLatencyMs
+                self.objectWillChange.send()
+            }
+        }
 
         autoDisplayService.onStateUpdated = { [weak self] isEnabled, isPresent, isOwner, isDisplayAsleep in
             DispatchQueue.main.async {
@@ -59,15 +88,48 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             }
         }
 
-        // 定期（每 1 秒）自动检测系统辅助功能与钥匙串状态，用户一旦在系统设置中勾选立刻无感秒变绿勾
+        // 监听系统级摄像头设备热插拔（即插即用）
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCameraDeviceChange),
+            name: AVCaptureDevice.wasConnectedNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleCameraDeviceChange),
+            name: AVCaptureDevice.wasDisconnectedNotification,
+            object: nil
+        )
+
+        // 定期（每 1 秒）自动检测硬件热插拔、系统辅助功能与钥匙串状态，即插即用无感更新
         Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
+
+            // 1. 摄像头热插拔心跳检测
+            let connected = self.irController.isConnected
+            if self.isDeviceConnected != connected {
+                DispatchQueue.main.async {
+                    self.isDeviceConnected = connected
+                    if connected {
+                        print("[MacHello] 📷 检测到摄像头热插入，自动激活硬件！")
+                        self.irController.resetToRGB()
+                    } else {
+                        print("[MacHello] ⚠️ 摄像头已拔出")
+                    }
+                    self.objectWillChange.send()
+                }
+            }
+
+            // 2. 辅助功能授权实时刷新
             let trusted = AccessibilityHelper.shared.isTrusted
             if self.isAccessibilityTrusted != trusted {
                 DispatchQueue.main.async {
                     self.isAccessibilityTrusted = trusted
                 }
             }
+
+            // 3. 钥匙串密码状态实时刷新
             let hasPw = KeychainHelper.shared.hasPassword()
             if self.hasStoredPassword != hasPw {
                 DispatchQueue.main.async {
@@ -77,6 +139,23 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         }
 
         refreshStatus()
+    }
+
+    @objc private func handleCameraDeviceChange(_ notification: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self = self else { return }
+            let connected = self.irController.isConnected
+            if self.isDeviceConnected != connected {
+                self.isDeviceConnected = connected
+                if connected {
+                    print("[MacHello] 📷 收到系统摄像头热插拔通知：Dell 0592WK 已连接！")
+                    self.irController.resetToRGB()
+                } else {
+                    print("[MacHello] ⚠️ 收到系统摄像头热插拔通知：设备已拔出")
+                }
+                self.objectWillChange.send()
+            }
+        }
     }
 
     public func refreshStatus() {
@@ -92,12 +171,57 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
         self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
         self.absenceTimeout = autoDisplayService.absenceTimeout
+        self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
+        self.linuxServerURL = linuxClient.serverURLString
+        self.isLinuxConnected = linuxClient.isConnected
+        self.linuxLatencyMs = linuxClient.serverLatencyMs
 
         self.isAppAuthEnabled = AutoAuthManager.shared.isAppAuthEnabled
         self.isLockScreenUnlockEnabled = AutoAuthManager.shared.isLockScreenUnlockEnabled
         self.isAudioFeedbackEnabled = AutoAuthManager.shared.isAudioFeedbackEnabled
         self.hasStoredPassword = KeychainHelper.shared.hasPassword()
         self.isAccessibilityTrusted = AccessibilityHelper.shared.isTrusted
+    }
+
+    public func toggleNetworkMode() {
+        let newState = !isNetworkModeEnabled
+        autoDisplayService.isNetworkModeEnabled = newState
+        self.isNetworkModeEnabled = newState
+        self.cameraService.isNetworkMode = newState
+        self.irController.isNetworkMode = newState
+        if newState {
+            linuxClient.start()
+        } else {
+            linuxClient.stop()
+        }
+    }
+
+    public func setLinuxServerURL(_ url: String) {
+        linuxClient.setServerURL(url)
+        self.linuxServerURL = linuxClient.serverURLString
+        self.cameraService.networkServerURL = linuxClient.serverURLString
+    }
+
+    public func promptForLinuxServerURL() {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "配置局域网 Linux 感应服务"
+            alert.informativeText = "请输入局域网中运行 MacHello Linux 服务的地址（例如 http://192.168.1.100:8765）："
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "保存并连接")
+            alert.addButton(withTitle: "取消")
+
+            let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            input.stringValue = self.linuxServerURL
+            alert.accessoryView = input
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                let url = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !url.isEmpty {
+                    self.setLinuxServerURL(url)
+                }
+            }
+        }
     }
 
     public func toggleAutoDisplay() {
@@ -182,6 +306,13 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     }
 
     public func toggleIRTest() {
+        if isNetworkModeEnabled && isLinuxConnected {
+            linuxClient.toggleIR { [weak self] irActive in
+                self?.isIRActive = irActive
+                self?.objectWillChange.send()
+            }
+            return
+        }
         guard isDeviceConnected else { return }
         let success = irController.toggle()
         if success {
@@ -212,6 +343,11 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !isAudioFeedbackEnabled
         AutoAuthManager.shared.isAudioFeedbackEnabled = newState
         self.isAudioFeedbackEnabled = newState
+    }
+
+    /// 单独试听 Face ID 认证成功提示音
+    public func playTestAudio() {
+        AudioFeedbackHelper.shared.playSuccess()
     }
 
     public func promptToStorePassword() {

@@ -34,12 +34,15 @@ public final class FaceDatabase {
     public static let shared = FaceDatabase()
 
     private let storageURL: URL
+    private var cachedProfile: FaceProfile?
+    private let cacheLock = NSLock()
 
     public init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let dir = home.appendingPathComponent(".machello", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.storageURL = dir.appendingPathComponent("faces.json")
+        _ = load()
     }
 
     public func save(profile: FaceProfile) throws {
@@ -48,17 +51,34 @@ public final class FaceDatabase {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(profile)
         try data.write(to: storageURL, options: .atomic)
+        cacheLock.lock()
+        self.cachedProfile = profile
+        cacheLock.unlock()
     }
 
     public func load() -> FaceProfile? {
+        cacheLock.lock()
+        if let cached = cachedProfile {
+            cacheLock.unlock()
+            return cached
+        }
+        cacheLock.unlock()
+
         guard let data = try? Data(contentsOf: storageURL) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(FaceProfile.self, from: data)
+        let profile = try? decoder.decode(FaceProfile.self, from: data)
+        cacheLock.lock()
+        self.cachedProfile = profile
+        cacheLock.unlock()
+        return profile
     }
 
     public func clear() {
         try? FileManager.default.removeItem(at: storageURL)
+        cacheLock.lock()
+        self.cachedProfile = nil
+        cacheLock.unlock()
     }
 
     public var isEnrolled: Bool {

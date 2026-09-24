@@ -55,12 +55,23 @@ public final class DisplayPowerManager: NSObject {
         }
     }
 
-    /// 立即休眠/关闭显示器（仅息屏，不休眠 CPU 与后台任务）
+    /// 立即锁定屏幕并休眠显示器（真正的系统级锁屏，立即进入 loginwindow 锁屏状态）
     public func sleepDisplay() {
         guard !isDisplayAsleep else { return }
         isDisplayAsleep = true
         notifyObservers()
 
+        // 1. 核心锁屏：调用 macOS login.framework 的 SACLockScreenImmediate 真正锁定系统屏幕
+        typealias SACLockScreenImmediateType = @convention(c) () -> Int32
+        if let handle = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY) {
+            if let sym = dlsym(handle, "SACLockScreenImmediate") {
+                let lockFunc = unsafeBitCast(sym, to: SACLockScreenImmediateType.self)
+                _ = lockFunc()
+            }
+            dlclose(handle)
+        }
+
+        // 2. 关闭显示器背光
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")

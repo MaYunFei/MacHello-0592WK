@@ -224,17 +224,30 @@ public final class DiagnosticViewModel: ObservableObject {
 
     public init() {
         refreshHardwareInfo()
+        loadExistingSnapshots()
+    }
+
+    public func loadExistingSnapshots() {
+        if let rgb = NSImage(contentsOf: DiagnosticFileManager.shared.rgbImagePath) {
+            self.rgbImage = rgb
+        }
+        if let ir = NSImage(contentsOf: DiagnosticFileManager.shared.irImagePath) {
+            self.irImage = ir
+        }
     }
 
     public func refreshHardwareInfo() {
         self.isConnected = IRController.shared.isConnected
-        if let dev = AVCaptureDevice.default(for: .video) {
+        if MacHelloService.shared.isNetworkModeEnabled {
+            self.cameraName = "Dell CN-0592WK (局域网 Linux 服务端直连)"
+            self.hardwareConfirmed = true
+        } else if let dev = AVCaptureDevice.default(for: .video) {
             self.cameraName = "\(dev.localizedName) (\(dev.modelID))"
+            if self.isConnected {
+                self.hardwareConfirmed = true
+            }
         } else {
             self.cameraName = "未找到可用视频设备"
-        }
-        if self.isConnected {
-            self.hardwareConfirmed = true
         }
     }
 
@@ -282,14 +295,18 @@ public final class DiagnosticViewModel: ObservableObject {
 
             do {
                 try cameraService.start(mode: .rgb)
-                // 采集 0.8 秒（约 24 帧），与真实业务场景对齐
-                Thread.sleep(forTimeInterval: 0.8)
+                // 采集 1.2 秒（给足网络缓冲与帧解码），捕获最佳实拍照
+                Thread.sleep(forTimeInterval: 1.2)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的黑帧污染画面
                 cameraService.stop()
                 rgbHelper.saveSnapshot()
                 DiagnosticFileManager.shared.log("Step 1: RGB 720P 测试完成，捕获 \(rgbHelper.frameCount) 帧")
 
+                let savedImg = NSImage(contentsOf: DiagnosticFileManager.shared.rgbImagePath)
                 DispatchQueue.main.async {
+                    if let img = savedImg {
+                        self.rgbImage = img
+                    }
                     self.test1State = .passed
                     self.test2State = .running
                     self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
@@ -355,8 +372,8 @@ public final class DiagnosticViewModel: ObservableObject {
 
             do {
                 try cameraService.start(mode: .ir)
-                // 采集 1.2 秒（约 36 帧），给足 CMOS 自动曝光增益爬升时间，并全量落盘每一帧
-                Thread.sleep(forTimeInterval: 1.2)
+                // 采集 1.5 秒，给足红外夜视 CMOS 自动曝光增益爬升时间，并全量落盘每一帧
+                Thread.sleep(forTimeInterval: 1.5)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的空帧/黑帧冲刷
                 cameraService.stop()
                 irHelper.saveSnapshot()
@@ -364,7 +381,11 @@ public final class DiagnosticViewModel: ObservableObject {
                 DiagnosticFileManager.shared.log("Step 4: IR 测试完成，捕获 \(irHelper.frameCount) 帧，全部帧已存入 ir_frames/")
                 DiagnosticFileManager.shared.log("=== 硬件自检全部通过 ===")
 
+                let savedImg = NSImage(contentsOf: DiagnosticFileManager.shared.irImagePath)
                 DispatchQueue.main.async {
+                    if let img = savedImg {
+                        self.irImage = img
+                    }
                     self.test4State = .passed
                     self.allPassed = true
                     self.isTesting = false

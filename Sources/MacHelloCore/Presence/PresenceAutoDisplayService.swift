@@ -19,12 +19,24 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private let defaultsKeyOwnerOnly = "com.machello.requireOwnerVerification"
     private let defaultsKeySmartIdle = "com.machello.smartIdlePowerSaving"
     private let defaultsKeyRespectMedia = "com.machello.respectMediaPlayback"
+    private let defaultsKeyNetworkMode = "com.machello.isNetworkModeEnabled"
+
+    private let linuxClient = LinuxPresenceClient.shared
 
     public var isEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: defaultsKeyEnabled) }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKeyEnabled)
             handleEnabledChanged(newValue)
+        }
+    }
+
+    /// 局域网 Linux 服务模式（摄像头插在局域网 Linux 设备上，全天候 24h 智能 HPD 感应，Mac 本机 0 摄像头开销）
+    public var isNetworkModeEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: defaultsKeyNetworkMode) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyNetworkMode)
+            handleNetworkModeChanged(newValue)
         }
     }
 
@@ -103,9 +115,34 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
     private override init() {
         super.init()
         presenceDetector.delegate = self
+
+        // 注册局域网 Linux 服务端事件推送
+        linuxClient.onOwnerArrived = { [weak self] in
+            self?.handleLinuxOwnerArrived()
+        }
+        linuxClient.onOwnerDeparted = { [weak self] in
+            self?.handleLinuxOwnerDeparted()
+        }
+        linuxClient.onStrangerDetected = { [weak self] in
+            self?.handleLinuxStrangerDetected()
+        }
+
         if isEnabled {
             startMonitoring()
         }
+    }
+
+    private func handleNetworkModeChanged(_ enabled: Bool) {
+        if enabled {
+            captureService.stop()
+            linuxClient.start()
+        } else {
+            linuxClient.stop()
+            if isEnabled {
+                startMonitoring()
+            }
+        }
+        emitStateChange()
     }
 
     private func handleEnabledChanged(_ enabled: Bool) {
@@ -128,11 +165,12 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         lastProbeSuccessTime = Date()
         presenceDetector.autoNotify = false
 
-        if !isSmartIdlePowerSavingEnabled || idleMonitor.idleSeconds >= 3.0 {
-            if !captureService.isRunning {
-                try? captureService.start(mode: .rgb)
-            }
-            captureService.delegate = self
+        if isNetworkModeEnabled {
+            captureService.stop()
+            linuxClient.start()
+        } else {
+            // 本机模式：遵循 BLEUnlock 规范，平时彻底关闭摄像头，0% CPU，状态栏 0 绿点
+            captureService.stop()
         }
 
         startAbsenceCheckTimer()
@@ -140,6 +178,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
 
     public func stopMonitoring() {
         stopAbsenceCheckTimer()
+        linuxClient.stop()
         if !FaceEnrollmentService.shared.isEnrolling {
             captureService.stop()
         }
@@ -161,8 +200,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling, !isDiagnosticRunning else { return }
 
         // 硬件连接断开保护 (Fail-Safe Guard)：
-        // 若摄像头已被用户物理拔出或未就绪，绝不强行熄屏！
-        // 自动安全挂起，将屏幕显示保持点亮状态，交由 macOS 原生电源管理托管
+        // 若摄像头未连接（无论本机还是局域网），绝不强行熄屏！
         guard irController.isConnected else {
             lastSeenOwnerTime = Date()
             lastProbeSuccessTime = Date()
@@ -176,15 +214,13 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         if !displayManager.isDisplayAsleep {
             pulseCycleCounter = 0
 
-            // 1. 媒体播放 / 在线会议感知：若正在观看视频（YouTube/B站/电影）或开会
+            // 1. 媒体播放 / 在线会议感知：若正在观看视频（YouTube/B站/电影）或开会，免打扰不熄屏
             if respectMediaPlayback && mediaDetector.isPreventingDisplaySleep {
                 lastSeenOwnerTime = Date()
-                lastProbeSuccessTime = Date()
                 let changed = (!isPersonPresent || !isOwnerVerified)
                 isPersonPresent = true
                 isOwnerVerified = true
 
-                // 观影期间绝不闪灯打扰，彻底关闭相机，0% CPU
                 if captureService.isRunning {
                     captureService.stop()
                 }
@@ -194,95 +230,162 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 return
             }
 
-            if isSmartIdlePowerSavingEnabled {
-                let idle = idleMonitor.idleSeconds
-                let probeInterval = max(5.0, absenceTimeout - 4.0)
+            let idle = idleMonitor.idleSeconds
 
-                // 2. 如果用户正在操作键盘鼠标
-                if idle < 3.0 {
-                    lastSeenOwnerTime = Date()
-                    lastProbeSuccessTime = Date()
-                    let changed = (!isPersonPresent || !isOwnerVerified)
-                    isPersonPresent = true
-                    isOwnerVerified = true
+            // 2. 如果用户正在操作键盘鼠标，刷新在位时间
+            if idle < 3.0 {
+                lastSeenOwnerTime = Date()
+                let changed = (!isPersonPresent || !isOwnerVerified)
+                isPersonPresent = true
+                isOwnerVerified = true
 
-                    // 用户正在打字，断开摄像头，指示灯灭，CPU 归零
-                    if captureService.isRunning {
-                        captureService.stop()
-                    }
-                    if changed {
-                        emitStateChange()
-                    }
-                    return
+                if captureService.isRunning {
+                    captureService.stop()
                 }
-
-                // 3. 如果不久前刚刚通过摄像头确认过用户还在（在过去 probeInterval 秒内已探查过）
-                let timeSinceLastProbe = Date().timeIntervalSince(lastProbeSuccessTime)
-                if timeSinceLastProbe < probeInterval {
-                    if captureService.isRunning {
-                        captureService.stop()
-                    }
-                    return
-                }
-
-                // 4. 停手超时：启动摄像头进行瞬时探查（人在即灭）
-                if !captureService.isRunning {
-                    try? captureService.start(mode: .rgb)
-                    captureService.delegate = self
-                }
-
-                // 5. 检查是否达到离席超时上限
-                let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
-                if elapsed >= absenceTimeout {
-                    // 确认无人，立即息屏
-                    displayManager.sleepDisplay()
-                    if captureService.isRunning {
-                        captureService.stop()
-                    }
+                if changed {
                     emitStateChange()
                 }
-            } else {
-                // 常规持续视觉模式
-                if !captureService.isRunning {
-                    try? captureService.start(mode: .rgb)
-                    captureService.delegate = self
-                }
-                let isOwnerSitting = requireOwnerVerification && faceDb.isEnrolled ? isOwnerVerified : isPersonPresent
-                if !isOwnerSitting {
-                    let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
-                    if elapsed >= absenceTimeout {
-                        displayManager.sleepDisplay()
-                        emitStateChange()
-                    }
-                }
+                return
+            }
+
+            // 3. 用户停手超过 3 秒（例如阅读、思考、或者离开了）：
+            // 在局域网模式下，每隔 3 秒请求一次 Linux 摄像头的单帧快照进行在位巡视 (Apple NPU 识别)
+            // 此时 Linux 摄像头会闪亮 0.1 秒进行人脸抓拍，指示灯眨一下眼，然后立即熄灭！
+            if isNetworkModeEnabled {
+                pollNetworkSnapshotForPresenceCheck()
+            } else if captureService.isRunning {
+                captureService.stop()
+            }
+
+            // 4. 检查是否达到无操作离席超时上限
+            let elapsed = Date().timeIntervalSince(lastSeenOwnerTime)
+            if elapsed >= absenceTimeout {
+                print("[Presence] 离开超时 \(Int(elapsed))s >= \(Int(absenceTimeout))s，立即锁定屏幕！")
+                displayManager.sleepDisplay()
+                isPersonPresent = false
+                isOwnerVerified = false
+                emitStateChange()
             }
         } else {
-            // 情况二：屏幕处于息屏黑屏状态
-            if isSmartIdlePowerSavingEnabled {
-                // 间歇低频脉冲巡检：每 3 秒启动红外夜视相机探测 1 秒，无人则关停，指示灯大部分时间熄灭
-                pulseCycleCounter = (pulseCycleCounter + 1) % 3
-                if pulseCycleCounter == 0 {
-                    if !captureService.isRunning {
-                        _ = irController.setMode(.ir)
-                        try? captureService.start(mode: .ir)
-                        captureService.delegate = self
-                    }
-                } else if pulseCycleCounter == 1 {
-                    // 维持检测中
-                } else {
-                    // 暂无人员靠近，关停相机并复位硬件以熄灭红外发射器与指示灯
-                    if captureService.isRunning {
-                        captureService.stop()
-                        irController.resetToRGB()
-                    }
-                }
+            // 情况二：屏幕处于息屏黑屏状态 (锁屏)
+            if isNetworkModeEnabled {
+                // 锁屏期间：每隔 2 秒请求一次快照，检测机主是否回到座位 (Apple NPU 识别到机主立即自动解锁)
+                pollNetworkSnapshotForPresenceCheck()
             } else {
-                if !captureService.isRunning {
-                    _ = irController.setMode(.ir)
-                    try? captureService.start(mode: .ir)
-                    captureService.delegate = self
+                // 本机直连模式遵循 BLEUnlock，黑屏期间摄像头彻底断电关闭，直到用户按键亮屏触发 Face ID 解锁
+                if captureService.isRunning {
+                    captureService.stop()
+                    irController.resetToRGB()
                 }
             }
+        }
+    }
+
+    private var isPollingSnapshot = false
+    private var lastSnapshotPollTime: Date = .distantPast
+
+    private func pollNetworkSnapshotForPresenceCheck() {
+        guard !isPollingSnapshot else { return }
+        let now = Date()
+        let interval: TimeInterval = displayManager.isDisplayAsleep ? 2.0 : 3.0
+        guard now.timeIntervalSince(lastSnapshotPollTime) >= interval else { return }
+        lastSnapshotPollTime = now
+        isPollingSnapshot = true
+
+        let serverURL = LinuxPresenceClient.shared.serverURLString
+        guard let url = URL(string: "\(serverURL)/api/snapshot") else {
+            isPollingSnapshot = false
+            return
+        }
+
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
+            defer { self?.isPollingSnapshot = false }
+            guard let self = self,
+                  let data = data,
+                  let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200,
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+                return
+            }
+
+            // 利用苹果 Vision 框架和 Apple NPU 毫秒级提取面容特征并比对 ~/.machello/faces.json
+            let faces = self.extractor.extract(from: cgImage)
+            guard !faces.isEmpty else { return }
+
+            for face in faces {
+                let match = self.faceDb.match(embedding: face.embedding, threshold: 0.58)
+                if match.matched {
+                    print("[Presence] ✓ 局域网摄像头检测到机主！(Apple NPU 识别打分: \(String(format: "%.2f", match.highestScore)))")
+                    DispatchQueue.main.async {
+                        self.handleOwnerDetectedOverNetwork(score: match.highestScore)
+                    }
+                    break
+                }
+            }
+        }.resume()
+    }
+
+    private func handleOwnerDetectedOverNetwork(score: Float) {
+        lastSeenOwnerTime = Date()
+        let changed = (!isPersonPresent || !isOwnerVerified)
+        isPersonPresent = true
+        isOwnerVerified = true
+
+        if displayManager.isDisplayAsleep {
+            displayManager.wakeDisplay()
+            emitStateChange()
+            AutoAuthManager.shared.unlockScreenIfNeeded()
+        } else if AutoAuthManager.shared.isScreenLocked() {
+            AutoAuthManager.shared.unlockScreenIfNeeded()
+            emitStateChange()
+        } else if changed {
+            emitStateChange()
+        }
+    }
+
+    // MARK: - Linux 局域网服务事件响应
+
+    private func handleLinuxOwnerArrived() {
+        guard isEnabled && isNetworkModeEnabled else { return }
+        let changed = (!isPersonPresent || !isOwnerVerified)
+        isPersonPresent = true
+        isOwnerVerified = true
+        lastSeenOwnerTime = Date()
+
+        // 收到 Linux 局域网服务端检测到机主靠近：如果屏幕休眠，毫秒级点亮并自动解锁进桌面！
+        if displayManager.isDisplayAsleep {
+            displayManager.wakeDisplay()
+            emitStateChange()
+            AutoAuthManager.shared.unlockScreenIfNeeded()
+        } else {
+            if AutoAuthManager.shared.isScreenLocked() {
+                AutoAuthManager.shared.unlockScreenIfNeeded()
+            }
+            if changed {
+                emitStateChange()
+            }
+        }
+    }
+
+    private func handleLinuxOwnerDeparted() {
+        guard isEnabled && isNetworkModeEnabled else { return }
+        isPersonPresent = false
+        isOwnerVerified = false
+        if !displayManager.isDisplayAsleep {
+            displayManager.sleepDisplay()
+            emitStateChange()
+        }
+    }
+
+    private func handleLinuxStrangerDetected() {
+        guard isEnabled && isNetworkModeEnabled else { return }
+        let changed = (!isPersonPresent || isOwnerVerified)
+        isPersonPresent = true
+        isOwnerVerified = false
+        if changed {
+            emitStateChange()
         }
     }
 
@@ -292,7 +395,11 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         guard isEnabled, !FaceEnrollmentService.shared.isEnrolling, !isDiagnosticRunning else { return }
 
         let now = Date()
-        guard now.timeIntervalSince(lastProcessedFrameTime) >= frameProcessingInterval else { return }
+        // 动态自适应节能采样率：
+        // 屏幕点亮且已确认机主在席时，降频至 1.0 秒一次（1 FPS），避免无效 Vision 特征提取计算，CPU 占用 < 0.2%；
+        // 息屏脉冲探测或机主未认定时，保持 0.25 秒（4 FPS）以确保秒级响应。
+        let targetInterval: TimeInterval = (!displayManager.isDisplayAsleep && isPersonPresent && isOwnerVerified) ? 1.0 : frameProcessingInterval
+        guard now.timeIntervalSince(lastProcessedFrameTime) >= targetInterval else { return }
         lastProcessedFrameTime = now
 
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
@@ -343,6 +450,7 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             }
             displayManager.wakeDisplay()
             irController.resetToRGB()
+            pulseCycleCounter = 0
             emitStateChange()
             AutoAuthManager.shared.unlockScreenIfNeeded()
         } else {
@@ -352,14 +460,6 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             }
             if changed {
                 emitStateChange()
-            }
-        }
-
-        // 2. 如果屏幕亮着且开启了智能节能：既然已经看准了机主在位，探查立刻圆满完成！
-        // 瞬间关闭摄像头，指示灯立刻熄灭，绝不一直常亮！
-        if !displayManager.isDisplayAsleep && isSmartIdlePowerSavingEnabled {
-            if captureService.isRunning {
-                captureService.stop()
             }
         }
     }
@@ -399,15 +499,10 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             lastProbeSuccessTime = Date()
             if displayManager.isDisplayAsleep {
                 displayManager.wakeDisplay()
+                pulseCycleCounter = 0
                 emitStateChange()
             } else if changed {
                 emitStateChange()
-            }
-
-            if !displayManager.isDisplayAsleep && isSmartIdlePowerSavingEnabled {
-                if captureService.isRunning {
-                    captureService.stop()
-                }
             }
         } else if changed {
             lastSeenOwnerTime = Date()

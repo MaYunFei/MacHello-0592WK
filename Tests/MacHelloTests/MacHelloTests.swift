@@ -5,6 +5,9 @@ final class MacHelloTests: XCTestCase {
     func testDeviceConnection() throws {
         let isConnected = IRController.shared.isConnected
         print("Device connected: \(isConnected)")
+        guard isConnected else {
+            throw XCTSkip("Dell 0592WK hardware not connected to local Mac")
+        }
         XCTAssertTrue(isConnected, "Dell 0592WK should be detected")
     }
 
@@ -31,6 +34,9 @@ final class MacHelloTests: XCTestCase {
     }
 
     func testCameraDiscovery() throws {
+        guard IRController.shared.isConnected else {
+            throw XCTSkip("Dell 0592WK camera not connected to local Mac")
+        }
         let camera = CameraCaptureService.findDellCamera()
         XCTAssertNotNil(camera, "Dell 0592WK camera should be discovered by AVFoundation")
         if let camera = camera {

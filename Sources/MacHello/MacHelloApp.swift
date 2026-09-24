@@ -18,14 +18,20 @@ struct MacHelloApp: App {
     var body: some Scene {
         MenuBarExtra("MacHello", systemImage: service.isDeviceConnected ? "faceid" : "person.crop.circle.badge.exclamationmark") {
             VStack(alignment: .leading, spacing: 6) {
-                // 1. 设备与面容状态
+                // 1. 设备与部署状态
                 HStack {
                     Circle()
-                        .fill(service.isDeviceConnected ? Color.green : Color.red)
+                        .fill(service.isNetworkModeEnabled ? (service.isLinuxConnected ? Color.green : Color.orange) : (service.isDeviceConnected ? Color.green : Color.red))
                         .frame(width: 8, height: 8)
-                    Text(service.isDeviceConnected ? "Dell 0592WK 已就绪" : "未检测到 0592WK 摄像头")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    if service.isNetworkModeEnabled {
+                        Text(service.isLinuxConnected ? "Linux 局域网服务已连接 (\(service.linuxLatencyMs)ms)" : "Linux 局域网服务连接中/离线")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text(service.isDeviceConnected ? "Dell 0592WK (本机 USB 直连)" : "未检测到本机 0592WK 摄像头")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 HStack {
@@ -37,67 +43,129 @@ struct MacHelloApp: App {
 
                 Divider()
 
-                // 2. 人体感应总开关
-                Button(action: {
-                    service.toggleAutoDisplay()
-                }) {
-                    Text(service.isAutoDisplayEnabled ? "✓ 人体感应（走开息屏 / 来人亮屏）" : "   人体感应（走开息屏 / 来人亮屏）")
+                // 2. 部署工作模式选择
+                Menu("工作模式: \(service.isNetworkModeEnabled ? "🌐 局域网 Linux 服务" : "🔌 本机 USB 直连")") {
+                    Button(action: {
+                        if service.isNetworkModeEnabled { service.toggleNetworkMode() }
+                    }) {
+                        let prefix = !service.isNetworkModeEnabled ? "✓ " : "   "
+                        Text(prefix + "🔌 本机 USB 直连 (无操作锁屏 + 唤醒瞬间 0.5s 刷脸)")
+                    }
+
+                    Button(action: {
+                        if !service.isNetworkModeEnabled { service.toggleNetworkMode() }
+                    }) {
+                        let prefix = service.isNetworkModeEnabled ? "✓ " : "   "
+                        Text(prefix + "🌐 局域网 Linux 智能服务 (全天候 24h 人体感应 + 0 绿点)")
+                    }
+
+                    if service.isNetworkModeEnabled {
+                        Divider()
+                        Text("当前地址: \(service.linuxServerURL)")
+                        Button("配置 Linux 服务端地址...") {
+                            service.promptForLinuxServerURL()
+                        }
+                    }
                 }
-                .disabled(!service.isDeviceConnected)
 
-                if service.isAutoDisplayEnabled {
-                    // 机主专属防窥鉴权
+                Divider()
+
+                // 3. 屏幕电源与感应管理
+                if service.isNetworkModeEnabled {
+                    // 局域网 Linux 模式：全天候 24h 人体存在感应
                     Button(action: {
-                        service.toggleRequireOwnerVerification()
+                        service.toggleAutoDisplay()
                     }) {
-                        let prefix = service.requireOwnerVerification ? "✓ " : "   "
-                        Text(prefix + (service.isEnrolled ? "仅限机主本人才亮屏 (防窥安全)" : "仅限机主本人才亮屏 (需先录入)"))
-                    }
-                    .disabled(!service.isEnrolled)
-
-                    // 智能键鼠感知与低功耗模式
-                    Button(action: {
-                        service.toggleSmartIdlePowerSaving()
-                    }) {
-                        let prefix = service.isSmartIdlePowerSavingEnabled ? "✓ " : "   "
-                        Text(prefix + "智能键鼠感知 (打字时熄灯，0% CPU)")
+                        Text(service.isAutoDisplayEnabled ? "✓ 局域网智能感应（走开息屏 / 来人亮屏）" : "   局域网智能感应（走开息屏 / 来人亮屏）")
                     }
 
-                    // 观影/会议免打扰
-                    Button(action: {
-                        service.toggleRespectMediaPlayback()
-                    }) {
-                        let prefix = service.respectMediaPlayback ? "✓ " : "   "
-                        Text(prefix + "视频观影/在线会议免打扰 (不熄屏不闪灯)")
-                    }
+                    if service.isAutoDisplayEnabled {
+                        // 观影/会议免打扰
+                        Button(action: {
+                            service.toggleRespectMediaPlayback()
+                        }) {
+                            let prefix = service.respectMediaPlayback ? "✓ " : "   "
+                            Text(prefix + "视频观影/在线会议免打扰 (不误息屏)")
+                        }
 
-                    // 离席息屏时长选择子菜单
-                    Menu("离席等待时长") {
-                        Button(action: { service.setAbsenceTimeout(10) }) {
-                            Text(service.absenceTimeout == 10 ? "✓ 10 秒 (极速体验)" : "   10 秒 (极速体验)")
+                        // 离开/无操作锁屏等待时长 (局域网模式)
+                        Menu("离开/无操作锁屏等待时长: \(Int(service.absenceTimeout)) 秒") {
+                            Button(action: { service.setAbsenceTimeout(15) }) {
+                                Text(service.absenceTimeout == 15 ? "✓ 15 秒 (测试快速体验)" : "   15 秒 (测试快速体验)")
+                            }
+                            Button(action: { service.setAbsenceTimeout(30) }) {
+                                Text(service.absenceTimeout == 30 ? "✓ 30 秒 (测试推荐)" : "   30 秒 (测试推荐)")
+                            }
+                            Button(action: { service.setAbsenceTimeout(60) }) {
+                                Text(service.absenceTimeout == 60 ? "✓ 1 分钟" : "   1 分钟")
+                            }
+                            Button(action: { service.setAbsenceTimeout(180) }) {
+                                Text(service.absenceTimeout == 180 ? "✓ 3 分钟" : "   3 分钟")
+                            }
+                            Button(action: { service.setAbsenceTimeout(300) }) {
+                                Text(service.absenceTimeout == 300 ? "✓ 5 分钟 (日常推荐)" : "   5 分钟 (日常推荐)")
+                            }
+                            Button(action: { service.setAbsenceTimeout(600) }) {
+                                Text(service.absenceTimeout == 600 ? "✓ 10 分钟" : "   10 分钟")
+                            }
                         }
-                        Button(action: { service.setAbsenceTimeout(15) }) {
-                            Text(service.absenceTimeout == 15 ? "✓ 15 秒 (测试推荐)" : "   15 秒 (测试推荐)")
-                        }
-                        Button(action: { service.setAbsenceTimeout(30) }) {
-                            Text(service.absenceTimeout == 30 ? "✓ 30 秒 (日常推荐)" : "   30 秒 (日常推荐)")
-                        }
-                        Button(action: { service.setAbsenceTimeout(60) }) {
-                            Text(service.absenceTimeout == 60 ? "✓ 1 分钟" : "   1 分钟")
-                        }
-                    }
 
-                    // 实时状态静态行
-                    if service.requireOwnerVerification && service.isEnrolled {
+                        // 状态显示
                         if service.isOwnerVerified {
-                            Text("● 状态：机主本人在位").font(.caption2).foregroundColor(.green)
+                            Text("● 实时状态：机主本人在位").font(.caption2).foregroundColor(.green)
                         } else if service.isPersonPresent {
-                            Text("● 状态：陌生人（保持黑屏）").font(.caption2).foregroundColor(.orange)
+                            Text("● 实时状态：有人在视野内").font(.caption2).foregroundColor(.blue)
                         } else {
-                            Text("○ 状态：无人").font(.caption2).foregroundColor(.secondary)
+                            Text("○ 实时状态：桌前无人").font(.caption2).foregroundColor(.secondary)
                         }
-                    } else {
-                        Text(service.isPersonPresent ? "● 状态：有人" : "○ 状态：无人").font(.caption2).foregroundColor(.secondary)
+
+                        Text("💡 由局域网 Linux 服务器运行传感器，Mac 本机 0 摄像头开销，状态栏 0 绿点！")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    // 本机 USB 直连模式：BLEUnlock 纯净模式
+                    Button(action: {
+                        service.toggleAutoDisplay()
+                    }) {
+                        Text(service.isAutoDisplayEnabled ? "✓ 无操作自动锁屏 (BLEUnlock 模式)" : "   无操作自动锁屏 (BLEUnlock 模式)")
+                    }
+                    .disabled(!service.isDeviceConnected)
+
+                    if service.isAutoDisplayEnabled {
+                        // 观影/会议免打扰
+                        Button(action: {
+                            service.toggleRespectMediaPlayback()
+                        }) {
+                            let prefix = service.respectMediaPlayback ? "✓ " : "   "
+                            Text(prefix + "视频观影/在线会议免打扰 (不息屏)")
+                        }
+
+                        // 无操作等待时长
+                        Menu("无操作等待锁屏时长") {
+                            Button(action: { service.setAbsenceTimeout(15) }) {
+                                Text(service.absenceTimeout == 15 ? "✓ 15 秒 (测试快速体验)" : "   15 秒 (测试快速体验)")
+                            }
+                            Button(action: { service.setAbsenceTimeout(30) }) {
+                                Text(service.absenceTimeout == 30 ? "✓ 30 秒 (测试推荐)" : "   30 秒 (测试推荐)")
+                            }
+                            Button(action: { service.setAbsenceTimeout(60) }) {
+                                Text(service.absenceTimeout == 60 ? "✓ 1 分钟" : "   1 分钟")
+                            }
+                            Button(action: { service.setAbsenceTimeout(180) }) {
+                                Text(service.absenceTimeout == 180 ? "✓ 3 分钟" : "   3 分钟")
+                            }
+                            Button(action: { service.setAbsenceTimeout(300) }) {
+                                Text(service.absenceTimeout == 300 ? "✓ 5 分钟 (日常推荐)" : "   5 分钟 (日常推荐)")
+                            }
+                            Button(action: { service.setAbsenceTimeout(600) }) {
+                                Text(service.absenceTimeout == 600 ? "✓ 10 分钟" : "   10 分钟")
+                            }
+                        }
+
+                        Text("💡 平时摄像头 100% 彻底关闭 (0% CPU，状态栏 0 绿点)；动键鼠亮屏瞬间 0.5s 刷脸秒进桌面！")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
                     }
                 }
 
@@ -109,6 +177,7 @@ struct MacHelloApp: App {
                 }) {
                     Label("设备自检与硬件确认向导...", systemImage: "wrench.and.screwdriver")
                 }
+                .disabled(!service.isDeviceConnected && !(service.isNetworkModeEnabled && service.isLinuxConnected))
 
                 Button(action: {
                     service.refreshStatus()
@@ -116,14 +185,22 @@ struct MacHelloApp: App {
                 }) {
                     Label(service.isEnrolled ? "重新录入 / 添加替用外貌..." : "录入面容 ID...", systemImage: "person.crop.circle.badge.plus")
                 }
-                .disabled(!service.isDeviceConnected)
+                .disabled(!service.isDeviceConnected && !(service.isNetworkModeEnabled && service.isLinuxConnected))
 
                 Button(action: {
                     service.toggleIRTest()
                 }) {
                     Label(service.isIRActive ? "熄灭红外测试灯" : "点亮红外测试灯", systemImage: "moon.stars.fill")
                 }
-                .disabled(!service.isDeviceConnected)
+                .disabled(!service.isDeviceConnected && !(service.isNetworkModeEnabled && service.isLinuxConnected))
+
+                if service.isNetworkModeEnabled && service.isLinuxConnected {
+                    Button("👁️ 浏览器直接打开实时监控流...") {
+                        if let url = URL(string: "\(service.linuxServerURL)/stream") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
 
                 // 4. 终端 Sudo 刷脸免密提权
                 Divider()
@@ -155,6 +232,10 @@ struct MacHelloApp: App {
                     }) {
                         let prefix = service.isAudioFeedbackEnabled ? "✓ " : "   "
                         Text(prefix + "播放 Face ID 认证成功提示音 (Tink)")
+                    }
+
+                    Button("🔊 试听认证成功提示音") {
+                        service.playTestAudio()
                     }
 
                     Divider()

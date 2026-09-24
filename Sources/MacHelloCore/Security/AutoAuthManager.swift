@@ -234,12 +234,22 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self = self else { return }
-            guard self.isScreenLocked() else { return }
+            guard self.isScreenLocked() else {
+                print("[AutoAuth] ⚠️ 屏幕已解锁或未处于锁定界面，严禁键入密码！")
+                return
+            }
             guard let password = self.keychain.fetchPassword() else { return }
 
             print("[AutoAuth] 机主已核验，正在模拟唤醒并输入密码自动解锁进桌面...")
             self.accessibility.wakeLoginPrompt()
-            usleep(150000) // 150ms 等待输入框完全获得焦点与动画就绪
+            usleep(250000)
+
+            // 发送按键前进行最后的原子安全校验
+            guard self.isScreenLocked() else {
+                print("[AutoAuth] ⚠️ 激活输入框后屏幕已非锁屏状态，取消密码按键模拟！")
+                return
+            }
+
             self.accessibility.simulateKeystrokes(password, pressEnter: true)
             if self.isAudioFeedbackEnabled {
                 self.audio.playSuccess()
@@ -337,17 +347,39 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             audio.playSuccess()
         }
 
-        // 从钥匙串读取解密密码并模拟输入
+        // 从钥匙串读取解密密码
         guard let password = keychain.fetchPassword() else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self = self else { return }
             if reason == .lockScreen {
+                // 【绝对安全铁律 1】：必须严格核验系统是否确实处于锁屏状态！
+                // 如果当前屏幕并未锁定（处于普通桌面应用），绝对严禁发送任何按键！
+                guard self.isScreenLocked() else {
+                    print("[AutoAuth] ⚠️ 致命安全拦截：屏幕未锁定（处于桌面应用），绝对禁止输入密码！")
+                    return
+                }
+
                 print("[AutoAuth] ✓ 锁屏机主核验成功，激活输入框并键入密码解锁进桌面...")
                 self.accessibility.wakeLoginPrompt()
                 usleep(250000) // 250ms 等待输入框清理与就绪
+
+                // 键入前做最后一次原子校验，防止并发解锁
+                guard self.isScreenLocked() else {
+                    print("[AutoAuth] ⚠️ 致命安全拦截：激活面板后屏幕状态已变更，取消密码输入！")
+                    return
+                }
+
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
             } else {
+                // 【绝对安全铁律 2】：管理员弹窗模式下，前台应用必须确系 SecurityAgent！
+                let frontmost = NSWorkspace.shared.frontmostApplication
+                let isSecurityAgent = (frontmost?.bundleIdentifier == "com.apple.SecurityAgent" || frontmost?.localizedName == "SecurityAgent")
+                guard isSecurityAgent else {
+                    print("[AutoAuth] ⚠️ 致命安全拦截：当前前台窗口不是 SecurityAgent（当前是: \(frontmost?.localizedName ?? "空")），绝对禁止输入密码！")
+                    return
+                }
+
                 print("[AutoAuth] ✓ 管理员弹窗机主核验成功，自动键入密码提权...")
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
             }

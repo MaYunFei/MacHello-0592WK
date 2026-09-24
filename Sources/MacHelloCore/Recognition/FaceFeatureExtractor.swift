@@ -32,16 +32,32 @@ public final class FaceFeatureExtractor {
 
     /// 从视频帧中提取人脸特征与朝向角度
     public func extract(from pixelBuffer: CVPixelBuffer) -> [FaceFeatureResult] {
-        guard let reqClass = faceprintRequestClass else {
-            return []
-        }
-
+        guard let reqClass = faceprintRequestClass else { return [] }
         let faceprintReq = reqClass.init()
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+        return performExtraction(handler: handler, request: faceprintReq)
+    }
 
+    /// 从静态图像/局域网快照中提取人脸特征 (经 Apple NPU 加速)
+    public func extract(from cgImage: CGImage) -> [FaceFeatureResult] {
+        guard let reqClass = faceprintRequestClass else { return [] }
+        let faceprintReq = reqClass.init()
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+        return performExtraction(handler: handler, request: faceprintReq)
+    }
+
+    /// 从 JPEG 原始字节流中直接提取人脸特征 (经 Apple NPU 加速)
+    public func extract(from data: Data) -> [FaceFeatureResult] {
+        guard let reqClass = faceprintRequestClass else { return [] }
+        let faceprintReq = reqClass.init()
+        let handler = VNImageRequestHandler(data: data, orientation: .up, options: [:])
+        return performExtraction(handler: handler, request: faceprintReq)
+    }
+
+    private func performExtraction(handler: VNImageRequestHandler, request: VNRequest) -> [FaceFeatureResult] {
         do {
-            try handler.perform([faceprintReq])
-            guard let observations = faceprintReq.results as? [VNFaceObservation] else {
+            try handler.perform([request])
+            guard let observations = request.results as? [VNFaceObservation] else {
                 return []
             }
 
@@ -53,7 +69,7 @@ public final class FaceFeatureExtractor {
                 let pitch = (obs.pitch?.floatValue) ?? 0.0
                 let roll = (obs.roll?.floatValue) ?? 0.0
 
-                // 2. 提取 128 维特征向量
+                // 2. 提取 128 维特征向量 (运行于 Apple NPU)
                 guard let fpObj = obs.value(forKey: "faceprint") as? NSObject,
                       let data = fpObj.value(forKey: "VNEntityIdentificationModelPrintData") as? Data else {
                     continue
