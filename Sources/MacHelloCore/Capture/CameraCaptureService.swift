@@ -28,6 +28,21 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
     public var isNetworkMode: Bool = false
     public var networkServerURL: String = "http://192.168.1.100:8765"
     public private(set) var isRunning: Bool = false
+    public var isCameraInverted: Bool = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted") {
+        didSet {
+            UserDefaults.standard.set(isCameraInverted, forKey: "com.machello.isCameraInverted")
+            updateConnectionOrientation()
+        }
+    }
+
+    private func updateConnectionOrientation() {
+        guard let output = videoOutput, let conn = output.connection(with: .video) else { return }
+        if #available(macOS 14.0, *), conn.isVideoRotationAngleSupported(180.0) {
+            conn.videoRotationAngle = isCameraInverted ? 180.0 : 0.0
+        } else if conn.isVideoOrientationSupported {
+            conn.videoOrientation = isCameraInverted ? .portraitUpsideDown : .portrait
+        }
+    }
 
     private override init() {
         super.init()
@@ -142,6 +157,7 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
         if session.canAddOutput(output) {
             session.addOutput(output)
             self.videoOutput = output
+            updateConnectionOrientation()
         }
 
         session.commitConfiguration()
@@ -253,6 +269,7 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
         defer { CVPixelBufferUnlockBaseAddress(pb, []) }
         guard let pxdata = CVPixelBufferGetBaseAddress(pb) else { return nil }
         let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
         let context = CGContext(
             data: pxdata,
             width: width,
@@ -260,8 +277,14 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
             bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
             space: rgbColorSpace,
-            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+            bitmapInfo: bitmapInfo
         )
+        // 若开启了摄像头倒置安装模式，执行严格 180° 旋转（同时翻转 X 与 Y 轴），
+        // 彻底校正上/下与左/右（绝不产生镜像左右颠倒），确保人脸姿态（左转/右转/抬头）100% 准确
+        if owner?.isCameraInverted == true {
+            context?.translateBy(x: CGFloat(width), y: CGFloat(height))
+            context?.scaleBy(x: -1.0, y: -1.0)
+        }
         context?.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         var formatDesc: CMVideoFormatDescription?

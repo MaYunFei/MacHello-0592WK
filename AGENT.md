@@ -146,8 +146,17 @@
    - **红外灯仅允许瞬时脉冲**：仅在黑夜弱光检测、刷脸识别核验或主动调试时，触发 0.5s 短促脉冲 (`pulse_ir`)，核验完成后立即物理切回 RGB 熄灭红外灯。
 11. **局域网数据源 Samba 式抽象准则 (Samba-Style Data Source Abstraction - CRITICAL)**：
    - **Linux 端定位于纯硬件数据源**：严禁在 Linux 端编写业务判定逻辑（如粗暴人脸识别或是否开门的决策）；闲时按需释放摄像头灭灯，0% CPU；
-   - **Mac 端统一接管大脑算力**：局域网流转的画面帧在 Mac 内存中无缝转为标准 `CVPixelBuffer` / `CMSampleBuffer`，全部喂入 Mac 端的 **Apple Vision 框架与 Apple Neural Engine (NPU)** 进行 512 维特征比对；
+   - **Mac 端统一接管大脑算力**：局域网流转的画面帧在 Mac内存中无缝转为标准 `CVPixelBuffer` / `CMSampleBuffer`，全部喂入 Mac 端的 **Apple Vision 框架与 Apple Neural Engine (NPU)** 进行 512 维特征比对；
    - **100% 复用所有核心业务**：本机直连与局域网模式仅在“数据源获取方式”上不同，下游的面容库比对（`~/.machello/faces.json`）、录入向导、双目自检向导与审计日志 100% 完全复用，确保极致的安全与优雅解耦。
+12. **Dell 0592WK 硬件双目分辨率与 FOURCC 规范 (Dual-Lens Resolution & Pixel Format Standards - CRITICAL)**：
+   - **RGB 模式**：传感器物理输出 `1280x720`，FOURCC 为 `MJPG`。在 Linux V4L2 环境下若错误配置为 640x480，驱动层会直接降级返回灰度红外传感器画面；
+   - **IR 模式**：红外物理传感器原生输出 `640x480`，FOURCC 为 `YUYV`；
+   - Linux 网关服务端（`machello_server.py`）必须支持在切换模式时动态平滑重置相机分辨率与 FOURCC 格式，并丢弃头 3 帧曝光建立期的坏帧，保证 RGB 全彩与红外高反差无缝切换。
+13. **摄像头安装朝向与刚体旋转规范 (Camera Inversion & Rigid 180° Rotation Standards - CRITICAL)**：
+   - **适配多场景安装**：默认为标准显示器上方正向安装；针对倒贴在显示器下方的场景，提供“摄像头倒置安装模式”开关（持久化于 `UserDefaults`：`com.machello.isCameraInverted`）；
+   - **严禁单纯垂直镜像 (Single Axis Flip)**：单纯 Y 轴镜像会导致左右手性反转，面容录入向导时“向左微转头”和“向右微转头”会彻底颠倒；
+   - **必须执行严格 2D 刚体 180° 旋转 (Rigid 180° Euclidean Rotation)**：同时翻转 X 轴与 Y 轴（`translateBy(w, h)` + `scaleBy(-1.0, -1.0)` 或原生硬件 `conn.videoRotationAngle = 180.0`），保证画面手性不变、左右/上下完全符合真实物理空间，确保 Apple Vision 的人脸姿态（`yaw` 偏航角与 `pitch` 俯仰角）100% 精准匹配；
+   - **局域网快照自动适配**：在席感应静态快照解析管道自动传入 `CGImagePropertyOrientation.down`，实现锁屏全天候全自动识别。
 
 ---
 

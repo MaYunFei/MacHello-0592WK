@@ -133,6 +133,7 @@ class VideoGateway:
         self.lock = threading.Lock()
         self.active_viewers = 0
         self.ir_test_active = False
+        self.current_mode_is_ir = False
         self.latest_jpeg: Optional[bytes] = None
         self.subscribers: Set[asyncio.Queue] = set()
         self.cap: Optional[Any] = None
@@ -140,23 +141,39 @@ class VideoGateway:
         self.worker_thread = threading.Thread(target=self._capture_worker, daemon=True)
         self.worker_thread.start()
 
-    def _open_camera(self) -> bool:
+    def _open_camera(self, is_ir: bool = False) -> bool:
         if not HAVE_CV:
             return False
-        if self.cap is not None and self.cap.isOpened():
-            return True
+        if self.cap is not None:
+            if self.cap.isOpened() and self.current_mode_is_ir == is_ir:
+                return True
+            self.cap.release()
+            self.cap = None
+
         cap = cv2.VideoCapture(self.device_id)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        if is_ir:
+            # 近红外物理镜头：固定 640x480 YUYV
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        else:
+            # 可见光物理镜头：固定 1280x720 MJPG 格式
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
         if cap.isOpened():
             self.cap = cap
+            self.current_mode_is_ir = is_ir
+            self.latest_jpeg = None
             # 预读稳定曝光
             for _ in range(2):
                 cap.read()
-            logger.info("📷 摄像头硬件已激活供流 (工作指示灯亮起)")
+            mode_desc = "🌙 近红外 640x480 YUYV" if is_ir else "📷 可见光 720P MJPG"
+            logger.info(f"摄像头硬件已激活供流 [{mode_desc}]")
             return True
         else:
-            logger.warning("无法打开摄像头设备")
+            logger.warning(f"无法打开摄像头设备 (/dev/video{self.device_id})")
             return False
 
     def _close_camera(self):
@@ -166,18 +183,21 @@ class VideoGateway:
             logger.info("💤 所有客户端已断开：摄像头硬件已释放，指示灯彻底熄灭，CPU 归零 (0%)")
 
     def set_ir_test(self, enable: bool):
-        """开启或关闭红外测试模式（开启时必须保持相机供流，850nm LED 才能通电发光）"""
+        """开启或关闭红外测试模式（切换硬件镜头与模式）"""
         with self.lock:
             self.ir_test_active = enable
-            if enable:
-                self.ir_controller.set_mode(True)
-                self._open_camera()
-                logger.info("💡 红外测试模式已开启：IR 850nm 发射管打亮，相机供流激活")
-            else:
-                self.ir_controller.set_mode(False)
-                if self.active_viewers <= 0:
-                    self._close_camera()
-                logger.info("💡 红外测试模式已关闭：IR 850nm 物理断电熄灭，相机已释放")
+            self.latest_jpeg = None
+            self.ir_controller.set_mode(enable)
+            # 切换底层硬件镜头模式，释放当前流以重新协商分辨率与编码
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
+            if enable or self.active_viewers > 0:
+                self._open_camera(is_ir=enable)
+            if not enable and self.active_viewers <= 0:
+                self._close_camera()
+            mode_str = "IR 850nm 发射管打亮 (近红外夜视)" if enable else "IR 850nm 物理断电熄灭 (RGB 可见光)"
+            logger.info(f"💡 硬件模式切换完成: {mode_str}")
 
     def _capture_worker(self):
         # 启动时确保红外灯物理断电
@@ -195,21 +215,22 @@ class VideoGateway:
                 time.sleep(0.2)
                 continue
 
-            # 有客户端拉流，确保相机打开
+            # 有客户端拉流，确保相机打开且工作在目标模式
             with self.lock:
-                if self.cap is None:
-                    if not self._open_camera():
+                target_ir = self.ir_test_active
+                if self.cap is None or self.current_mode_is_ir != target_ir:
+                    if not self._open_camera(is_ir=target_ir):
                         time.sleep(0.5)
                         continue
 
             ret, frame = self.cap.read()
             if ret and frame is not None:
-                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 jpeg_bytes = jpeg.tobytes()
                 with self.lock:
                     self.latest_jpeg = jpeg_bytes
 
-            time.sleep(0.04)  # 约 20~25 FPS 高清流畅推流
+            time.sleep(0.033)  # 约 30 FPS 高清推流
 
     def get_snapshot(self) -> Optional[bytes]:
         """按需单帧抓拍：用于单次快速核验或间歇在席巡检 (指示灯眨眼 0.08s 随即熄灭)"""
@@ -221,9 +242,17 @@ class VideoGateway:
                     return jpeg.tobytes()
 
             # 相机未开启时，原子化极速抓拍单帧后立刻关闭设备灭灯
+            target_ir = self.ir_test_active
             cap = cv2.VideoCapture(self.device_id)
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            if target_ir:
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'YUYV'))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            else:
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
             jpeg_bytes = None
             try:
                 for _ in range(2):

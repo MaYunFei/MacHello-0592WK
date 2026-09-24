@@ -38,6 +38,9 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isLinuxConnected: Bool = false
     @Published public var linuxLatencyMs: Int = 0
 
+    // 摄像头安装朝向 (倒置 180° 安装)
+    @Published public var isCameraInverted: Bool = false
+
     private let irController = IRController.shared
     private let cameraService = CameraCaptureService.shared
     private let autoDisplayService = PresenceAutoDisplayService.shared
@@ -56,6 +59,8 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.linuxServerURL = linuxClient.serverURLString
         self.isLinuxConnected = linuxClient.isConnected
         self.linuxLatencyMs = linuxClient.serverLatencyMs
+        self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
+        self.cameraService.isCameraInverted = self.isCameraInverted
 
         // 彻底同步底层驱动的数据源状态 (Samba 模式与本机 USB 直插模式解耦)
         self.cameraService.isNetworkMode = self.isNetworkModeEnabled
@@ -175,6 +180,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.linuxServerURL = linuxClient.serverURLString
         self.isLinuxConnected = linuxClient.isConnected
         self.linuxLatencyMs = linuxClient.serverLatencyMs
+        self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
 
         self.isAppAuthEnabled = AutoAuthManager.shared.isAppAuthEnabled
         self.isLockScreenUnlockEnabled = AutoAuthManager.shared.isLockScreenUnlockEnabled
@@ -194,6 +200,14 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         } else {
             linuxClient.stop()
         }
+    }
+
+    public func toggleCameraInverted() {
+        let newVal = !isCameraInverted
+        self.isCameraInverted = newVal
+        self.cameraService.isCameraInverted = newVal
+        UserDefaults.standard.set(newVal, forKey: "com.machello.isCameraInverted")
+        self.objectWillChange.send()
     }
 
     public func setLinuxServerURL(_ url: String) {

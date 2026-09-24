@@ -39,18 +39,18 @@ public final class FaceFeatureExtractor {
     }
 
     /// 从静态图像/局域网快照中提取人脸特征 (经 Apple NPU 加速)
-    public func extract(from cgImage: CGImage) -> [FaceFeatureResult] {
+    public func extract(from cgImage: CGImage, orientation: CGImagePropertyOrientation = .up) -> [FaceFeatureResult] {
         guard let reqClass = faceprintRequestClass else { return [] }
         let faceprintReq = reqClass.init()
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
         return performExtraction(handler: handler, request: faceprintReq)
     }
 
     /// 从 JPEG 原始字节流中直接提取人脸特征 (经 Apple NPU 加速)
-    public func extract(from data: Data) -> [FaceFeatureResult] {
+    public func extract(from data: Data, orientation: CGImagePropertyOrientation = .up) -> [FaceFeatureResult] {
         guard let reqClass = faceprintRequestClass else { return [] }
         let faceprintReq = reqClass.init()
-        let handler = VNImageRequestHandler(data: data, orientation: .up, options: [:])
+        let handler = VNImageRequestHandler(data: data, orientation: orientation, options: [:])
         return performExtraction(handler: handler, request: faceprintReq)
     }
 

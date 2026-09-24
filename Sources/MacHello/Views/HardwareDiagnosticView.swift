@@ -10,12 +10,14 @@ public enum TestState: Equatable {
     case running
     case passed
     case failed(String)
+    case warning(String)
 
     var icon: String {
         switch self {
         case .idle: return "circle"
         case .running: return "hourglass.circle"
         case .passed: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         }
     }
@@ -25,6 +27,7 @@ public enum TestState: Equatable {
         case .idle: return .secondary
         case .running: return .orange
         case .passed: return .green
+        case .warning: return .orange
         case .failed: return .red
         }
     }
@@ -109,6 +112,7 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     private var bestJPEGData: Data?
     private var bestLuminance: Float = 0.0
     private var faceDetectedInBest: Bool = false
+    public var bestFaceFeatures: [FaceFeatureResult] = []
     private let faceDetector = FaceFeatureExtractor()
 
     private func calculateAverageLuminance(pixelBuffer: CVPixelBuffer) -> Float {
@@ -158,6 +162,11 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let jpegData = ciContext.jpegRepresentation(of: ciImage, colorSpace: colorSpace, options: [:]) else { return }
 
+        // 丢弃 RGB 模式下前 3 帧的过渡帧与初始网络缓冲，确保抓拍到纯正稳定的彩色画面
+        if !isIRTarget && frameCount <= 3 {
+            return
+        }
+
         // 如果是 IR 模式，无遗漏保存每一张全量原生实拍帧
         if isIRTarget {
             let filename = String(format: "frame_%02d.jpg", currentFrameIndex)
@@ -174,16 +183,36 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
                 bestJPEGData = jpegData
                 bestLuminance = lum
                 faceDetectedInBest = true
+                bestFaceFeatures = faces
             } else if hasFace == faceDetectedInBest && lum >= bestLuminance {
                 bestJPEGData = jpegData
                 bestLuminance = lum
+                if hasFace {
+                    bestFaceFeatures = faces
+                }
             } else if bestJPEGData == nil {
                 bestJPEGData = jpegData
                 bestLuminance = lum
             }
         } else {
-            // RGB 模式保存最后或最佳
-            bestJPEGData = jpegData
+            // RGB 模式并发检测人脸并选择最佳画面
+            let faces = faceDetector.extract(from: pixelBuffer)
+            let hasFace = !faces.isEmpty
+            if hasFace && !faceDetectedInBest {
+                bestJPEGData = jpegData
+                bestLuminance = lum
+                faceDetectedInBest = true
+                bestFaceFeatures = faces
+            } else if hasFace == faceDetectedInBest && lum >= bestLuminance {
+                bestJPEGData = jpegData
+                bestLuminance = lum
+                if hasFace {
+                    bestFaceFeatures = faces
+                }
+            } else if bestJPEGData == nil {
+                bestJPEGData = jpegData
+                bestLuminance = lum
+            }
         }
 
         // UI 实时预览 (以 ~15fps 节流避免阻塞主线程)
@@ -202,6 +231,9 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     func saveSnapshot() {
         guard let data = bestJPEGData else { return }
         DiagnosticFileManager.shared.saveImage(data, isIR: isIRTarget)
+        if bestFaceFeatures.isEmpty {
+            bestFaceFeatures = faceDetector.extract(from: data)
+        }
     }
 }
 
@@ -214,25 +246,78 @@ public final class DiagnosticViewModel: ObservableObject {
     @Published public var test2State: TestState = .idle
     @Published public var test3State: TestState = .idle
     @Published public var test4State: TestState = .idle
+    @Published public var test5State: TestState = .idle
+    @Published public var test5Detail: String? = nil
 
     @Published public var rgbImage: NSImage?
     @Published public var irImage: NSImage?
+
+    @Published public var rgbBadgeText: String? = nil
+    @Published public var rgbBadgeColor: Color = .secondary
+    @Published public var irBadgeText: String? = nil
+    @Published public var irBadgeColor: Color = .secondary
+
+    // 摄像头安装朝向配置 (倒置安装模式)
+    @Published public var isCameraInverted: Bool = false
 
     @Published public var isTesting: Bool = false
     @Published public var allPassed: Bool = false
     @Published public var statusMessage: String = "点击下方按钮开始全面的硬件链路自检"
 
     public init() {
+        self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
         refreshHardwareInfo()
         loadExistingSnapshots()
     }
 
+    public func toggleCameraInversion() {
+        let newVal = !isCameraInverted
+        self.isCameraInverted = newVal
+        UserDefaults.standard.set(newVal, forKey: "com.machello.isCameraInverted")
+        CameraCaptureService.shared.isCameraInverted = newVal
+        MacHelloService.shared.isCameraInverted = newVal
+    }
+
     public func loadExistingSnapshots() {
-        if let rgb = NSImage(contentsOf: DiagnosticFileManager.shared.rgbImagePath) {
+        let fileManager = DiagnosticFileManager.shared
+        if let rgb = NSImage(contentsOf: fileManager.rgbImagePath) {
             self.rgbImage = rgb
+            if let rgbData = try? Data(contentsOf: fileManager.rgbImagePath) {
+                let faces = FaceFeatureExtractor.shared.extract(from: rgbData)
+                if !faces.isEmpty {
+                    self.rgbBadgeText = "👤 检测到人脸"
+                    self.rgbBadgeColor = .green
+                } else {
+                    self.rgbBadgeText = "⚪ 未检测到人脸"
+                    self.rgbBadgeColor = .secondary
+                }
+            }
         }
-        if let ir = NSImage(contentsOf: DiagnosticFileManager.shared.irImagePath) {
+        if let ir = NSImage(contentsOf: fileManager.irImagePath) {
             self.irImage = ir
+            if let irData = try? Data(contentsOf: fileManager.irImagePath) {
+                let faces = FaceFeatureExtractor.shared.extract(from: irData)
+                let isEnrolled = FaceDatabase.shared.isEnrolled
+                if let bestFace = faces.first {
+                    if isEnrolled {
+                        let match = FaceDatabase.shared.match(embedding: bestFace.embedding)
+                        let pct = Int(round(max(0.0, match.highestScore) * 100))
+                        if match.matched {
+                            self.irBadgeText = "🟢 机主已识别 (\(pct)%)"
+                            self.irBadgeColor = .green
+                        } else {
+                            self.irBadgeText = "🟠 未匹配机主 (\(pct)%)"
+                            self.irBadgeColor = .orange
+                        }
+                    } else {
+                        self.irBadgeText = "👤 检测到人脸 (未录入)"
+                        self.irBadgeColor = .blue
+                    }
+                } else {
+                    self.irBadgeText = "⚪ 未检测到人脸"
+                    self.irBadgeColor = .secondary
+                }
+            }
         }
     }
 
@@ -258,6 +343,10 @@ public final class DiagnosticViewModel: ObservableObject {
         test2State = .idle
         test3State = .idle
         test4State = .idle
+        test5State = .idle
+        test5Detail = nil
+        rgbBadgeText = nil
+        irBadgeText = nil
         rgbImage = nil
         irImage = nil
         statusMessage = "正在连接可见光镜头并拉取实时画面..."
@@ -279,12 +368,14 @@ public final class DiagnosticViewModel: ObservableObject {
                 DiagnosticFileManager.shared.log("已恢复后台感知服务与全场景免密监听")
             }
 
-            // 先确保摄像头停止，处于干净准备状态
+            // 先确保摄像头停止，处于干净准备状态，并强制复位至可见光 RGB 模式
             cameraService.stop()
-            Thread.sleep(forTimeInterval: 0.25)
+            irController.resetToRGB()
+            Thread.sleep(forTimeInterval: 0.3)
 
             // Step 1: 测试可见光 (RGB 720P) 实时画面
             DiagnosticFileManager.shared.log("Step 1: 正在测试可见光 (RGB 720P) 镜头...")
+            var rgbHasFace: Bool = false
             let rgbHelper = DiagnosticCaptureHelper()
             rgbHelper.isGrayscale = false
             rgbHelper.isIRTarget = false
@@ -302,10 +393,18 @@ public final class DiagnosticViewModel: ObservableObject {
                 rgbHelper.saveSnapshot()
                 DiagnosticFileManager.shared.log("Step 1: RGB 720P 测试完成，捕获 \(rgbHelper.frameCount) 帧")
 
+                rgbHasFace = !rgbHelper.bestFaceFeatures.isEmpty
                 let savedImg = NSImage(contentsOf: DiagnosticFileManager.shared.rgbImagePath)
                 DispatchQueue.main.async {
                     if let img = savedImg {
                         self.rgbImage = img
+                    }
+                    if rgbHasFace {
+                        self.rgbBadgeText = "👤 检测到人脸"
+                        self.rgbBadgeColor = .green
+                    } else {
+                        self.rgbBadgeText = "⚪ 未检测到人脸"
+                        self.rgbBadgeColor = .secondary
                     }
                     self.test1State = .passed
                     self.test2State = .running
@@ -379,7 +478,6 @@ public final class DiagnosticViewModel: ObservableObject {
                 irHelper.saveSnapshot()
                 irController.resetToRGB()
                 DiagnosticFileManager.shared.log("Step 4: IR 测试完成，捕获 \(irHelper.frameCount) 帧，全部帧已存入 ir_frames/")
-                DiagnosticFileManager.shared.log("=== 硬件自检全部通过 ===")
 
                 let savedImg = NSImage(contentsOf: DiagnosticFileManager.shared.irImagePath)
                 DispatchQueue.main.async {
@@ -387,15 +485,82 @@ public final class DiagnosticViewModel: ObservableObject {
                         self.irImage = img
                     }
                     self.test4State = .passed
+                    self.test5State = .running
+                    self.statusMessage = "正在通过神经网络分析人脸特征并执行比对打分..."
+                }
+
+                // Step 5: 人脸识别特征提取与打分比对
+                Thread.sleep(forTimeInterval: 0.15)
+                let irFace = irHelper.bestFaceFeatures.first
+                let isEnrolled = FaceDatabase.shared.isEnrolled
+
+                var badgeText = ""
+                var badgeColor = Color.secondary
+                var step5Text = ""
+                var step5State = TestState.passed
+                var finalMessage = ""
+
+                if let face = irFace {
+                    if isEnrolled {
+                        let match = FaceDatabase.shared.match(embedding: face.embedding)
+                        let pct = Int(round(max(0.0, match.highestScore) * 100))
+                        DiagnosticFileManager.shared.log("Step 5: 机主面容已录入，最高相似度: \(match.highestScore) (\(pct)%), 判定命中: \(match.matched)")
+
+                        if match.matched {
+                            badgeText = "🟢 机主已识别 (\(pct)%)"
+                            badgeColor = .green
+                            step5Text = "已识别机主本人 (匹配度: \(pct)%) ✓"
+                            step5State = .passed
+                            finalMessage = "🎉 双目镜头与机主识别全链路通过！匹配度 \(pct)%，红外解锁已就绪。"
+                        } else {
+                            badgeText = "🟠 未匹配机主 (\(pct)%)"
+                            badgeColor = .orange
+                            step5Text = "识别到人脸，相似度较弱 (\(pct)%)"
+                            step5State = .warning("相似度较弱 (\(pct)%)")
+                            finalMessage = "⚠️ 硬件正常且识别到人脸，但与机主相似度较低 (\(pct)%)，建议正视镜头。"
+                        }
+                    } else {
+                        DiagnosticFileManager.shared.log("Step 5: 未录入面容，但红外镜头已成功识别到人脸")
+                        badgeText = "👤 检测到人脸 (未录入)"
+                        badgeColor = .blue
+                        step5Text = "已检测到人脸 (面容未录入) ℹ️"
+                        step5State = .passed
+                        finalMessage = "🎉 硬件双目自检通过，已识别人脸！建议点击下方【立即录入面容 ID】。"
+                    }
+                } else {
+                    DiagnosticFileManager.shared.log("Step 5: 红外镜头未检测到人脸")
+                    if rgbHasFace {
+                        badgeText = "⚪ 红外未识别人脸"
+                        badgeColor = .secondary
+                        step5Text = "仅可见光检测到人脸 (红外未捕获)"
+                        step5State = .warning("红外未捕获面部")
+                        finalMessage = "⚠️ 硬件正常，可见光检测到人，但红外未捕获清晰面部，请正对摄像头重试。"
+                    } else {
+                        badgeText = "⚪ 未检测到人脸"
+                        badgeColor = .secondary
+                        step5Text = "未检测到人脸 (请正视镜头)"
+                        step5State = .warning("未检测到人脸")
+                        finalMessage = "⚠️ 硬件双目自检通过，但未检测到人脸，请确保摄像头无遮挡并正对镜头。"
+                    }
+                }
+
+                DiagnosticFileManager.shared.log("=== 硬件自检与识别比对全部完成 ===")
+
+                DispatchQueue.main.async {
+                    self.irBadgeText = badgeText
+                    self.irBadgeColor = badgeColor
+                    self.test5Detail = step5Text
+                    self.test5State = step5State
                     self.allPassed = true
                     self.isTesting = false
-                    self.statusMessage = "🎉 双目镜头全部自检通过！可见光与红外实拍成像完美。"
+                    self.statusMessage = finalMessage
                 }
             } catch {
                 irController.resetToRGB()
                 DiagnosticFileManager.shared.log("Step 4: IR 捕获失败: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.test4State = .failed(error.localizedDescription)
+                    self.test5State = .idle
                     self.isTesting = false
                     self.statusMessage = "红外捕获失败"
                 }
@@ -469,6 +634,19 @@ public struct HardwareDiagnosticView: View {
                     Text("我已确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组")
                         .font(.subheadline)
                 }
+
+                Toggle(isOn: Binding(
+                    get: { vm.isCameraInverted },
+                    set: { _ in vm.toggleCameraInversion() }
+                )) {
+                    HStack(spacing: 4) {
+                        Text("🙃 摄像头倒置安装模式 (旋转 180°)")
+                            .font(.subheadline)
+                        Text("— 适合倒贴在显示器下方使用")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
             .padding(.horizontal, 24)
 
@@ -512,6 +690,20 @@ public struct HardwareDiagnosticView: View {
                                     }
                                 )
                         }
+
+                        if let badge = vm.rgbBadgeText {
+                            HStack {
+                                Text(badge)
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(vm.rgbBadgeColor)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(vm.rgbBadgeColor.opacity(0.12))
+                                    .cornerRadius(6)
+                                Spacer()
+                            }
+                        }
                     }
 
                     // 右侧：IR 红外夜视镜头
@@ -548,6 +740,20 @@ public struct HardwareDiagnosticView: View {
                                     }
                                 )
                         }
+
+                        if let badge = vm.irBadgeText {
+                            HStack {
+                                Text(badge)
+                                    .font(.caption2)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(vm.irBadgeColor)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(vm.irBadgeColor.opacity(0.12))
+                                    .cornerRadius(6)
+                                Spacer()
+                            }
+                        }
                     }
                 }
             }
@@ -559,6 +765,7 @@ public struct HardwareDiagnosticView: View {
                 testItemRow(title: "2. Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: vm.test2State)
                 testItemRow(title: "3. 850nm 近红外发射管打亮与夜视模式写入", state: vm.test3State)
                 testItemRow(title: "4. 近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: vm.test4State)
+                testItemRow(title: "5. 人脸识别特征提取与面容比对打分", state: vm.test5State, customPassedText: vm.test5Detail)
             }
             .padding(10)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
@@ -593,7 +800,7 @@ public struct HardwareDiagnosticView: View {
                 Spacer()
 
                 if vm.allPassed && vm.hardwareConfirmed {
-                    Button("立即录入面容 ID ➔") {
+                    Button(FaceDatabase.shared.isEnrolled ? "重新录入面容 ID ➔" : "立即录入面容 ID ➔") {
                         UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
                         onStartEnrollment()
                     }
@@ -610,7 +817,7 @@ public struct HardwareDiagnosticView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
         }
-        .frame(width: 580, height: 680)
+        .frame(width: 580, height: 720)
         .onAppear {
             vm.refreshHardwareInfo()
         }
@@ -628,7 +835,7 @@ public struct HardwareDiagnosticView: View {
         }
     }
 
-    private func testItemRow(title: String, state: TestState) -> some View {
+    private func testItemRow(title: String, state: TestState, customPassedText: String? = nil) -> some View {
         HStack {
             Image(systemName: state.icon)
                 .foregroundColor(state.color)
@@ -642,7 +849,9 @@ public struct HardwareDiagnosticView: View {
             case .running:
                 Text("正在测试...").font(.caption).foregroundColor(.orange)
             case .passed:
-                Text("正常 ✓").font(.caption).fontWeight(.semibold).foregroundColor(.green)
+                Text(customPassedText ?? "正常 ✓").font(.caption).fontWeight(.semibold).foregroundColor(.green)
+            case .warning(let warn):
+                Text(warn).font(.caption).fontWeight(.semibold).foregroundColor(.orange)
             case .failed(let err):
                 Text("失败: \(err)").font(.caption).foregroundColor(.red)
             }

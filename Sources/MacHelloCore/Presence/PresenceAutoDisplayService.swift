@@ -311,7 +311,9 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             }
 
             // 利用苹果 Vision 框架和 Apple NPU 毫秒级提取面容特征并比对 ~/.machello/faces.json
-            let faces = self.extractor.extract(from: cgImage)
+            let isInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
+            let orientation: CGImagePropertyOrientation = isInverted ? .down : .up
+            let faces = self.extractor.extract(from: cgImage, orientation: orientation)
             guard !faces.isEmpty else { return }
 
             for face in faces {

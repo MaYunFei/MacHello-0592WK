@@ -68,6 +68,14 @@ struct MacHelloApp: App {
                     }
                 }
 
+                // 摄像头安装朝向 (屏幕下方倒贴)
+                Button(action: {
+                    service.toggleCameraInverted()
+                }) {
+                    let prefix = service.isCameraInverted ? "✓ " : "   "
+                    Text(prefix + "🙃 摄像头倒置安装模式 (旋转 180°)")
+                }
+
                 Divider()
 
                 // 3. 屏幕电源与感应管理
