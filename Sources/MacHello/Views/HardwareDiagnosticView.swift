@@ -109,7 +109,7 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     private var lastUpdate: TimeInterval = 0
     public var frameCount = 0
-    private var bestJPEGData: Data?
+    public var bestJPEGData: Data?
     private var bestLuminance: Float = 0.0
     private var faceDetectedInBest: Bool = false
     public var bestFaceFeatures: [FaceFeatureResult] = []
@@ -518,6 +518,16 @@ public final class DiagnosticViewModel: ObservableObject {
                             step5Text = "识别到人脸，相似度较弱 (\(pct)%)"
                             step5State = .warning("相似度较弱 (\(pct)%)")
                             finalMessage = "⚠️ 硬件正常且识别到人脸，但与机主相似度较低 (\(pct)%)，建议正视镜头。"
+                        }
+
+                        // 归档自检抓拍到通行审计历史中心
+                        if let data = irHelper.bestJPEGData {
+                            AuthAuditLogger.shared.recordAuth(
+                                data: data,
+                                reason: "diagnostic",
+                                score: match.highestScore,
+                                success: match.matched
+                            )
                         }
                     } else {
                         DiagnosticFileManager.shared.log("Step 5: 未录入面容，但红外镜头已成功识别到人脸")

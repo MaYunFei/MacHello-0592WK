@@ -320,6 +320,17 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 let match = self.faceDb.match(embedding: face.embedding, threshold: 0.58)
                 if match.matched {
                     print("[Presence] ✓ 局域网摄像头检测到机主！(Apple NPU 识别打分: \(String(format: "%.2f", match.highestScore)))")
+                    let isWake = self.displayManager.isDisplayAsleep
+                    let isLocked = AutoAuthManager.shared.isScreenLocked()
+                    if isWake || isLocked {
+                        let reason = isWake ? "wake_display" : "lockscreen"
+                        AuthAuditLogger.shared.recordAuth(
+                            cgImage: cgImage,
+                            reason: reason,
+                            score: match.highestScore,
+                            success: true
+                        )
+                    }
                     DispatchQueue.main.async {
                         self.handleOwnerDetectedOverNetwork(score: match.highestScore)
                     }

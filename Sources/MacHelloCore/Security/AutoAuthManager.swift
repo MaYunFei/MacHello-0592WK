@@ -283,50 +283,79 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
         // 微软 Windows Hello 规范：偶数帧为 850nm 满血补光帧，奇数帧为环境光无补光帧
         if isIR {
-            if authFrameCount % 2 == 0 && authFrameCount >= 2 {
-                // 1. 偶数帧（补光帧）：提取人脸特征并执行特征向量匹配
+            if cameraService.isNetworkMode {
+                // 局域网模式：直接基于远程红外流进行机主特征核验与抓拍留存
                 let faces = extractor.extract(from: pixelBuffer)
                 for face in faces {
                     let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
                     if match.matched {
-                        self.lastLitPixelBuffer = pixelBuffer
-                        self.pendingMatch = (match.highestScore, face.boundingBox)
-                        break
+                        let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                        print("[AutoAuth] ✓ 局域网红外人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
+                        AuthAuditLogger.shared.recordAuth(
+                            pixelBuffer: pixelBuffer,
+                            reason: reasonStr,
+                            score: match.highestScore,
+                            success: true
+                        )
+                        onAuthSucceeded()
+                        return
                     }
                 }
-            } else if let lit = lastLitPixelBuffer, let pending = pendingMatch {
-                // 2. 紧随其后的奇数帧（环境帧）：仅用 33ms 差分比对，执行 15Hz 脉冲频闪活体检测（拦截手机/屏幕/打印照片攻击）
-                let liveness = AmbientSubtractionProcessor.shared.verifyLiveness(
-                    lit: lit,
-                    ambient: pixelBuffer,
-                    faceBoundingBox: pending.box
-                )
-
-                if liveness.isLive {
-                    let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
-                    print("[AutoAuth] ✓ 机主红外人脸核验成功 (相似度: \(String(format: "%.2f", pending.score)), 频闪活体调制深度: \(String(format: "%.1f%%", liveness.strobeDelta * 100)))")
-                    AuthAuditLogger.shared.recordAuth(
-                        pixelBuffer: lit,
-                        reason: reasonStr,
-                        score: pending.score,
-                        success: true
+            } else {
+                // 本机模式：15Hz 脉冲频闪活体检测与环境光差分
+                if authFrameCount % 2 == 0 && authFrameCount >= 2 {
+                    // 1. 偶数帧（补光帧）：提取人脸特征并执行特征向量匹配
+                    let faces = extractor.extract(from: pixelBuffer)
+                    for face in faces {
+                        let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                        if match.matched {
+                            self.lastLitPixelBuffer = pixelBuffer
+                            self.pendingMatch = (match.highestScore, face.boundingBox)
+                            break
+                        }
+                    }
+                } else if let lit = lastLitPixelBuffer, let pending = pendingMatch {
+                    // 2. 紧随其后的奇数帧（环境帧）：仅用 33ms 差分比对，执行 15Hz 脉冲频闪活体检测（拦截手机/屏幕/打印照片攻击）
+                    let liveness = AmbientSubtractionProcessor.shared.verifyLiveness(
+                        lit: lit,
+                        ambient: pixelBuffer,
+                        faceBoundingBox: pending.box
                     )
-                    lastLitPixelBuffer = nil
-                    pendingMatch = nil
-                    onAuthSucceeded()
-                    return
-                } else {
-                    print("[AutoAuth] ⚠️ 活体防伪拦截：无 850nm 频闪脉冲响应 (Delta: \(String(format: "%.3f", liveness.strobeDelta)))，拒绝虚假屏幕/照片攻击！")
-                    lastLitPixelBuffer = nil
-                    pendingMatch = nil
+
+                    if liveness.isLive {
+                        let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                        print("[AutoAuth] ✓ 机主红外人脸核验成功 (相似度: \(String(format: "%.2f", pending.score)), 频闪活体调制深度: \(String(format: "%.1f%%", liveness.strobeDelta * 100)))")
+                        AuthAuditLogger.shared.recordAuth(
+                            pixelBuffer: lit,
+                            reason: reasonStr,
+                            score: pending.score,
+                            success: true
+                        )
+                        lastLitPixelBuffer = nil
+                        pendingMatch = nil
+                        onAuthSucceeded()
+                        return
+                    } else {
+                        print("[AutoAuth] ⚠️ 活体防伪拦截：无 850nm 频闪脉冲响应 (Delta: \(String(format: "%.3f", liveness.strobeDelta)))，拒绝虚假屏幕/照片攻击！")
+                        lastLitPixelBuffer = nil
+                        pendingMatch = nil
+                    }
                 }
             }
         } else {
-            // RGB 模式回退
+            // RGB 模式回退 / 局域网全彩流
             let faces = extractor.extract(from: pixelBuffer)
             for face in faces {
                 let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
                 if match.matched {
+                    let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                    print("[AutoAuth] ✓ 机主全彩人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
+                    AuthAuditLogger.shared.recordAuth(
+                        pixelBuffer: pixelBuffer,
+                        reason: reasonStr,
+                        score: match.highestScore,
+                        success: true
+                    )
                     onAuthSucceeded()
                     return
                 }

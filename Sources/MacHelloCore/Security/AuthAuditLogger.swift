@@ -17,6 +17,7 @@ public struct AuditRecord: Identifiable, Codable {
         case "wake_display": return "人脸靠近感应亮屏"
         case "admin_prompt": return "系统管理员弹窗提权"
         case "terminal_sudo": return "终端 Sudo 刷脸认证"
+        case "diagnostic": return "双目硬件链路自检"
         default: return "面容识别认证"
         }
     }
@@ -27,6 +28,7 @@ public struct AuditRecord: Identifiable, Codable {
         case "wake_display": return "display"
         case "admin_prompt": return "shield.fill"
         case "terminal_sudo": return "terminal.fill"
+        case "diagnostic": return "stethoscope"
         default: return "person.crop.circle.fill"
         }
     }
@@ -71,8 +73,30 @@ public final class AuthAuditLogger: ObservableObject {
         }
     }
 
-    /// 记录一次人脸解锁/认证的抓拍实况与日志
+    /// 记录一次人脸解锁/认证的抓拍实况与日志 (CVPixelBuffer 源)
     public func recordAuth(pixelBuffer: CVPixelBuffer, reason: String, score: Float, success: Bool) {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        saveRecord(ciImage: ciImage, reason: reason, score: score, success: success)
+    }
+
+    /// 记录一次人脸解锁/认证的抓拍实况与日志 (CGImage 源，自动根据倒置设置校正)
+    public func recordAuth(cgImage: CGImage, reason: String, score: Float, success: Bool) {
+        var ciImage = CIImage(cgImage: cgImage)
+        let isInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
+        if isInverted {
+            ciImage = ciImage.oriented(.down)
+        }
+        saveRecord(ciImage: ciImage, reason: reason, score: score, success: success)
+    }
+
+    /// 记录一次人脸解锁/认证的抓拍实况与日志 (JPEG Data 源)
+    public func recordAuth(data: Data, reason: String, score: Float, success: Bool) {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        recordAuth(cgImage: cgImage, reason: reason, score: score, success: success)
+    }
+
+    private func saveRecord(ciImage: CIImage, reason: String, score: Float, success: Bool) {
         queue.async { [weak self] in
             guard let self = self else { return }
 
@@ -86,18 +110,18 @@ public final class AuthAuditLogger: ObservableObject {
             let filename = "\(timeStr)_\(reason)_\(status)_sim\(String(format: "%.2f", score)).jpg"
             let fileURL = self.historyDirectory.appendingPathComponent(filename)
 
-            var ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            var processedCI = ciImage
             // 纯正黑白灰度
             if let filter = CIFilter(name: "CIColorControls") {
-                filter.setValue(ciImage, forKey: kCIInputImageKey)
+                filter.setValue(processedCI, forKey: kCIInputImageKey)
                 filter.setValue(0.0, forKey: kCIInputSaturationKey)
                 if let out = filter.outputImage {
-                    ciImage = out
+                    processedCI = out
                 }
             }
 
             let cs = CGColorSpaceCreateDeviceRGB()
-            if let data = self.ciContext.jpegRepresentation(of: ciImage, colorSpace: cs, options: [:]) {
+            if let data = self.ciContext.jpegRepresentation(of: processedCI, colorSpace: cs, options: [:]) {
                 try? data.write(to: fileURL)
             }
 
