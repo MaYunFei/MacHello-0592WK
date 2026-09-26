@@ -18,6 +18,8 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var requireOwnerVerification: Bool = true
     @Published public var isSmartIdlePowerSavingEnabled: Bool = true
     @Published public var respectMediaPlayback: Bool = true
+    @Published public var isMediaPreventingSleep: Bool = false
+    @Published public var activeMediaAppName: String? = nil
     @Published public var absenceTimeout: TimeInterval = 15.0
     @Published public var isDisplayAsleep: Bool = false
     @Published public var isPersonPresent: Bool = false
@@ -53,6 +55,8 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
         self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
+        self.activeMediaAppName = MediaActivityDetector.shared.activeMediaAppName
+        self.isMediaPreventingSleep = (self.activeMediaAppName != nil)
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
         self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
@@ -141,6 +145,17 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
                     self.hasStoredPassword = hasPw
                 }
             }
+
+            // 4. 视频观影/在线会议免打扰媒体状态实时刷新
+            let mediaApp = MediaActivityDetector.shared.activeMediaAppName
+            let isMediaPreventing = (mediaApp != nil)
+            if self.isMediaPreventingSleep != isMediaPreventing || self.activeMediaAppName != mediaApp {
+                DispatchQueue.main.async {
+                    self.isMediaPreventingSleep = isMediaPreventing
+                    self.activeMediaAppName = mediaApp
+                    self.objectWillChange.send()
+                }
+            }
         }
 
         refreshStatus()
@@ -175,6 +190,8 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.requireOwnerVerification = autoDisplayService.requireOwnerVerification
         self.isSmartIdlePowerSavingEnabled = autoDisplayService.isSmartIdlePowerSavingEnabled
         self.respectMediaPlayback = autoDisplayService.respectMediaPlayback
+        self.activeMediaAppName = MediaActivityDetector.shared.activeMediaAppName
+        self.isMediaPreventingSleep = (self.activeMediaAppName != nil)
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
         self.linuxServerURL = linuxClient.serverURLString
@@ -254,6 +271,27 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let newState = !respectMediaPlayback
         autoDisplayService.respectMediaPlayback = newState
         self.respectMediaPlayback = newState
+        self.objectWillChange.send()
+    }
+
+    /// 视频观影/在线会议免打扰菜单项文案（实时指示小绿点及来源 App）
+    public var mediaPlaybackMenuTitle: String {
+        let currentApp = MediaActivityDetector.shared.activeMediaAppName
+        let isPreventing = (currentApp != nil)
+
+        if !respectMediaPlayback {
+            return "   视频观影/在线会议免打扰 (已关闭)"
+        }
+
+        if isPreventing {
+            if let name = currentApp, !name.isEmpty {
+                return "✓ 视频观影/在线会议免打扰 🟢 运行中 (\(name))"
+            } else {
+                return "✓ 视频观影/在线会议免打扰 🟢 运行中"
+            }
+        } else {
+            return "✓ 视频观影/在线会议免打扰 (⚪ 待命中)"
+        }
     }
 
     public func toggleRequireOwnerVerification() {

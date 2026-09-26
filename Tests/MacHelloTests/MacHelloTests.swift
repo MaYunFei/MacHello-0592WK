@@ -113,4 +113,27 @@ final class MacHelloTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(face.landmarks.count, 60, "Landmarks should have rich detail (> 60 points)")
         }
     }
+
+    func testMediaActivityDetectorAndMenuTitle() {
+        let detector = MediaActivityDetector.shared
+        let service = MacHelloService.shared
+
+        // 默认状态下验证菜单项文案
+        service.respectMediaPlayback = true
+        let titleWhenActive = service.mediaPlaybackMenuTitle
+        if detector.isPreventingDisplaySleep {
+            XCTAssertTrue(titleWhenActive.contains("🟢 运行中"))
+            XCTAssertNotNil(detector.activeMediaAppName)
+        } else {
+            XCTAssertTrue(titleWhenActive.contains("⚪ 待命中"))
+        }
+
+        // 关闭功能时验证文案
+        service.respectMediaPlayback = false
+        let titleWhenDisabled = service.mediaPlaybackMenuTitle
+        XCTAssertTrue(titleWhenDisabled.contains("已关闭"))
+
+        // 恢复默认
+        service.respectMediaPlayback = true
+    }
 }

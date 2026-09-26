@@ -92,8 +92,7 @@ struct MacHelloApp: App {
                         Button(action: {
                             service.toggleRespectMediaPlayback()
                         }) {
-                            let prefix = service.respectMediaPlayback ? "✓ " : "   "
-                            Text(prefix + "视频观影/在线会议免打扰 (不误息屏)")
+                            Text(service.mediaPlaybackMenuTitle)
                         }
 
                         // 离开/无操作锁屏等待时长 (局域网模式)
@@ -145,8 +144,7 @@ struct MacHelloApp: App {
                         Button(action: {
                             service.toggleRespectMediaPlayback()
                         }) {
-                            let prefix = service.respectMediaPlayback ? "✓ " : "   "
-                            Text(prefix + "视频观影/在线会议免打扰 (不息屏)")
+                            Text(service.mediaPlaybackMenuTitle)
                         }
 
                         // 无操作等待时长
