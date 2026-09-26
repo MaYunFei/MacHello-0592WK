@@ -21,16 +21,28 @@ struct MacHelloApp: App {
                 // 1. 设备与部署状态
                 HStack {
                     Circle()
-                        .fill(service.isNetworkModeEnabled ? (service.isLinuxConnected ? Color.green : Color.orange) : (service.isDeviceConnected ? Color.green : Color.red))
+                        .fill(service.isNetworkModeEnabled ?
+                              (service.isLinuxConnected ? Color.green : (service.isLinuxServerReachable ? Color.orange : Color.red))
+                              : (service.isDeviceConnected ? Color.green : Color.red))
                         .frame(width: 8, height: 8)
                     if service.isNetworkModeEnabled {
-                        Text(service.isLinuxConnected ? "Linux 局域网服务已连接 (\(service.linuxLatencyMs)ms)" : "Linux 局域网服务连接中/离线")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        if !service.isLinuxServerReachable {
+                            Text("❌ 未连接到 Linux 服务端 (\(service.linuxServerURL))")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        } else if !service.isLinuxConnected {
+                            Text("⚠️ Linux 服务端在线，但未检测到摄像头插入")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        } else {
+                            Text("Linux 局域网硬件已就绪 (\(service.linuxLatencyMs)ms)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     } else {
                         Text(service.isDeviceConnected ? "Dell 0592WK (本机 USB 直连)" : "未检测到本机 0592WK 摄像头")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(service.isDeviceConnected ? .secondary : .red)
                     }
                 }
 
@@ -183,7 +195,7 @@ struct MacHelloApp: App {
                 }) {
                     Label("设备自检与硬件确认向导...", systemImage: "wrench.and.screwdriver")
                 }
-                .disabled(!service.isDeviceConnected && !(service.isNetworkModeEnabled && service.isLinuxConnected))
+                .disabled(!service.isDeviceConnected)
 
                 Button(action: {
                     service.refreshStatus()
@@ -191,14 +203,14 @@ struct MacHelloApp: App {
                 }) {
                     Label(service.isEnrolled ? "重新录入 / 添加替用外貌..." : "录入面容 ID...", systemImage: "person.crop.circle.badge.plus")
                 }
-                .disabled(!service.isDeviceConnected && !(service.isNetworkModeEnabled && service.isLinuxConnected))
+                .disabled(!service.isDeviceConnected)
 
                 Button(action: {
                     service.toggleIRTest()
                 }) {
                     Label(service.isIRActive ? "熄灭红外测试灯" : "点亮红外测试灯", systemImage: "moon.stars.fill")
                 }
-                .disabled(!service.isDeviceConnected && !(service.isNetworkModeEnabled && service.isLinuxConnected))
+                .disabled(!service.isDeviceConnected)
 
                 if service.isNetworkModeEnabled && service.isLinuxConnected {
                     Button("👁️ 浏览器直接打开实时监控流...") {

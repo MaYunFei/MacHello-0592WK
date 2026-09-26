@@ -19,7 +19,7 @@ public final class IRController {
 
     public var isConnected: Bool {
         if isNetworkMode {
-            return true
+            return LinuxPresenceClient.shared.isConnected
         }
         return dell_camera_is_connected()
     }

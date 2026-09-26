@@ -11,7 +11,7 @@
 | 节点维度 | 操作系统版本 | 硬件架构 / 宿主拓扑 | 关键环境参数与角色定位 |
 | :--- | :--- | :--- | :--- |
 | **🍎 Mac 客户端 (业务与大脑端)** | **macOS 27.0** (Build `26A428`) | Apple Silicon (ARM64e / M 系列芯片) | - **业务与识别大脑**：统一调用 Apple Vision 框架，算力 100% 运行于苹果 **16 核神经网络引擎 (Apple Neural Engine, ANE / NPU)**；<br>- 走局域网内存管道流转图像，**状态栏 0 绿色隐私圆点，0 MenuBarAgent 冲突**。 |
-| **🐧 Linux 网关 (硬件数据源端)** | **Debian GNU/Linux 13** (`trixie` / 13.1) | Proxmox VE (PVE) 虚拟化环境<br>内核: `7.0.12-1-pve x86_64` | - **Samba 式纯硬件网关**：USB 直通共享 Dell 0592WK (`0bda:5767`)；<br>- 负责 UVC XU 控制序列与按需提供 MJPEG 画面，平时相机释放彻底灭灯，**整机 CPU 占用 0.0%**。 |
+| **🐧 Linux 网关 (硬件数据源端)** | **Debian GNU/Linux 13** (`trixie` / 13.1) | Proxmox VE (PVE) 虚拟化环境<br>内核: `7.0.12-1-pve x86_64` | - **内网专机连接**：`ssh root@192.168.66.5` (部署目录 `/root/machello-server`)；<br>- **Samba 式纯硬件网关**：单文件裸跑 + systemd 系统级开机自启 (`machello-server.service`)；<br>- 启动与运行时动态探测 Dell 0592WK (`0bda:5767`) 插入状态，支持免重启热插拔；<br>- 负责 UVC XU 控制序列与按需提供 MJPEG 画面，平时相机释放彻底灭灯，**整机 CPU 占用 0.0%**。 |
 
 ---
 

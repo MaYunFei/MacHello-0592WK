@@ -12,7 +12,7 @@
 | 节点维度 | 操作系统版本 | 硬件架构 / 宿主拓扑 | 核心运行栈与算力分配 |
 | :--- | :--- | :--- | :--- |
 | **🍎 Mac 客户端 (大脑端)** | **macOS 27.0** (Build `26A428`) | Apple Silicon (ARM64e / M 系列芯片) | **纯原生 Swift 6.0**。算力全开苹果 **16 核神经网络引擎 (NPU)**，走局域网内存管道流转图像，**状态栏 0 绿色隐私圆点，0 MenuBarAgent 冲突**。 |
-| **🐧 Linux 网关 (数据源端)** | **Debian GNU/Linux 13** (`trixie` / 13.1) | Proxmox VE (PVE) 虚拟机 / LXC<br>内核: `7.0.12-1-pve x86_64` | **轻量硬件数据网关 (Samba 模式)**。直通 Dell 0592WK (`0bda:5767`)，按需供流，平时摄像头释放彻底熄灭指示灯，**整机 CPU 占用 0.0%**。 |
+| **🐧 Linux 网关 (数据源端)** | **Debian GNU/Linux 13** (`trixie` / 13.1) | Proxmox VE (PVE) 虚拟机 / LXC<br>内核: `7.0.12-1-pve x86_64` | **轻量硬件数据网关 (Samba 模式)**。内网专机 `ssh root@192.168.66.5`（`/root/machello-server`，已配置 systemd 开机自启）。动态检测 Dell 0592WK (`0bda:5767`) 插入状态，按需供流，平时摄像头释放彻底熄灭指示灯，**整机 CPU 占用 0.0%**。 |
 
 ---
 

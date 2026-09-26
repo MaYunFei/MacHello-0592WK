@@ -5,9 +5,11 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
     public static let shared = LinuxPresenceClient()
 
     private let defaultsKeyServerURL = "com.machello.linuxServerURL"
-    private let defaultServerURL = "http://192.168.1.100:8765"
+    private let defaultServerURL = "http://192.168.66.5:8765"
 
     @Published public var isConnected: Bool = false
+    @Published public var isServerReachable: Bool = false
+    @Published public var isHardwareConnected: Bool = false
     @Published public var serverURLString: String = ""
     @Published public var isPersonPresent: Bool = false
     @Published public var isOwnerPresent: Bool = false
@@ -94,6 +96,8 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
         webSocketTask = nil
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.isServerReachable = false
+            self.isHardwareConnected = false
             self.isConnected = false
             self.onStatusChanged?(false, self.isPersonPresent, self.isOwnerPresent)
         }
@@ -131,10 +135,12 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
                 guard let self = self else { return }
                 if let error = error {
                     print("[LinuxClient] WebSocket Ping 失败: \(error.localizedDescription)")
+                    self.isServerReachable = false
                     self.isConnected = false
                     self.scheduleReconnect()
                 } else {
-                    if !self.isConnected {
+                    self.isServerReachable = true
+                    if !self.isConnected && self.isHardwareConnected {
                         self.isConnected = true
                         print("[LinuxClient] 已成功建立与 Linux 人体感应服务的实时长连接 ✓")
                     }
@@ -143,19 +149,42 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
         }
     }
 
-    private func measureLatency() {
-        guard let url = URL(string: "\(serverURLString)/api/status") else { return }
+    public func measureLatency(completion: ((Bool) -> Void)? = nil) {
+        guard let url = URL(string: "\(serverURLString)/api/status") else {
+            completion?(false)
+            return
+        }
         let start = Date()
         var request = URLRequest(url: url)
         request.timeoutInterval = 2.0
 
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self else { return }
-            if let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200 {
+            if let httpResp = response as? HTTPURLResponse, httpResp.statusCode == 200,
+               let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 let ms = Int(Date().timeIntervalSince(start) * 1000)
+                let isHw = json["is_connected"] as? Bool ?? true
                 DispatchQueue.main.async {
                     self.serverLatencyMs = ms
-                    self.isConnected = true
+                    self.isServerReachable = true
+                    self.isHardwareConnected = isHw
+                    let overall = isHw
+                    if self.isConnected != overall {
+                        self.isConnected = overall
+                        self.onStatusChanged?(overall, self.isPersonPresent, self.isOwnerPresent)
+                    }
+                    completion?(true)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.isServerReachable = false
+                    self.isHardwareConnected = false
+                    if self.isConnected {
+                        self.isConnected = false
+                        self.onStatusChanged?(false, self.isPersonPresent, self.isOwnerPresent)
+                    }
+                    completion?(false)
                 }
             }
         }.resume()
@@ -169,13 +198,16 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
             case .failure(let error):
                 print("[LinuxClient] 接收消息中断: \(error.localizedDescription)")
                 DispatchQueue.main.async {
+                    self.isServerReachable = false
+                    self.isHardwareConnected = false
                     self.isConnected = false
+                    self.onStatusChanged?(false, self.isPersonPresent, self.isOwnerPresent)
                 }
                 self.scheduleReconnect()
 
             case .success(let message):
                 DispatchQueue.main.async {
-                    self.isConnected = true
+                    self.isServerReachable = true
                 }
                 switch message {
                 case .string(let text):
@@ -200,6 +232,10 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
         }
 
         let eventType = json["event"] as? String ?? json["type"] as? String ?? ""
+        if let isHw = json["is_connected"] as? Bool {
+            self.isHardwareConnected = isHw
+            self.isConnected = self.isServerReachable && isHw
+        }
         let isPresent = json["is_present"] as? Bool ?? json["isPresent"] as? Bool ?? false
         let isOwner = json["is_owner"] as? Bool ?? json["isOwner"] as? Bool ?? false
         let confidence = (json["confidence"] as? NSNumber)?.floatValue ?? 0.0

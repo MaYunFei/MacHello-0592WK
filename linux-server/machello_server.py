@@ -6,6 +6,7 @@ MacHello-0592WK Linux Camera Gateway 🐧👁️
 定位：
 - 纯硬件数据提供者（不跑任何业务逻辑与人脸比对，算力 100% 留给 Mac NPU）
 - 驱动 Realtek 0bda:5767 硬件与 UVC XU 控制序列（RGB 模式 / 850nm 红外夜视模式）
+- 具备开机自检与动态硬件感知能力：准确判断摄像头是否插入，支持即插即用
 - 按需供流：当 Mac 或浏览器请求画面时极速开启；无客户端时彻底释放相机灭灯，0% CPU
 - 极速暴露 HTTP MJPEG 流、单帧快照 API 与 WebSocket 双向控制通道
 """
@@ -38,6 +39,45 @@ logging.basicConfig(
 logger = logging.getLogger("machello-gateway")
 
 # ==============================================================================
+# 0. 硬件探针：自动发现与校验 Dell 0592WK (0bda:5767)
+# ==============================================================================
+
+def probe_camera_node() -> Optional[str]:
+    """探测系统中 Dell 0592WK (0bda:5767) 或兼容视频设备节点"""
+    base_dir = "/sys/class/video4linux"
+    if os.path.exists(base_dir):
+        try:
+            for dev_name in sorted(os.listdir(base_dir)):
+                dev_dir = os.path.join(base_dir, dev_name)
+                vid_path = os.path.join(dev_dir, "device/../idVendor")
+                pid_path = os.path.join(dev_dir, "device/../idProduct")
+                idx_path = os.path.join(dev_dir, "index")
+                if os.path.exists(vid_path) and os.path.exists(pid_path):
+                    try:
+                        with open(vid_path, "r") as f:
+                            vid = f.read().strip().lower()
+                        with open(pid_path, "r") as f:
+                            pid = f.read().strip().lower()
+                        if vid == "0bda" and pid == "5767":
+                            # 优先采用 index 0 主视频捕获通道
+                            if os.path.exists(idx_path):
+                                with open(idx_path, "r") as f:
+                                    idx = f.read().strip()
+                                if idx == "0":
+                                    return f"/dev/{dev_name}"
+                            return f"/dev/{dev_name}"
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug(f"探测 /sys/class/video4linux 异常: {e}")
+
+    # 回退探测
+    for dev in ["/dev/video0", "/dev/video1"]:
+        if os.path.exists(dev):
+            return dev
+    return None
+
+# ==============================================================================
 # 1. Realtek UVC Extension Unit (Unit 4) 5步握手协议
 # ==============================================================================
 
@@ -55,32 +95,67 @@ class UVCIOCControlQuery(ctypes.Structure):
     ]
 
 class RealtekIRController:
-    """Linux V4L2 底层驱动 Dell 0592WK 红外 LED 与模式切换"""
-    def __init__(self, device_path: str = "/dev/video0"):
-        self.device_path = device_path
+    """Linux V4L2 底层驱动 Dell 0592WK 红外 LED 与模式切换，支持热插拔感知"""
+    def __init__(self, device_path: Optional[str] = None):
+        self.device_path = device_path or probe_camera_node() or "/dev/video0"
         self.unit_id = 4
         self.fd: Optional[int] = None
         self.is_connected = False
         self.current_is_ir = False
         self._init_device()
 
+    def _close_device(self):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except Exception:
+                pass
+            self.fd = None
+        self.is_connected = False
+
     def _init_device(self):
-        try:
-            if os.path.exists(self.device_path):
-                self.fd = os.open(self.device_path, os.O_RDWR | os.O_NONBLOCK)
-                self.is_connected = True
-                logger.info(f"已连接相机硬件设备节点: {self.device_path}")
+        if not os.path.exists(self.device_path):
+            found = probe_camera_node()
+            if found:
+                self.device_path = found
             else:
-                self.is_connected = False
+                self._close_device()
+                return
+
+        try:
+            self._close_device()
+            self.fd = os.open(self.device_path, os.O_RDWR | os.O_NONBLOCK)
+            self.is_connected = True
+            logger.info(f"已连接相机硬件设备节点: {self.device_path}")
         except Exception as e:
             logger.warning(f"打开设备节点失败 ({self.device_path}): {e}")
-            self.is_connected = False
+            self._close_device()
 
-    def _xu_query(self, selector: int, query: int, data: bytes) -> bytes:
+    def check_connection(self) -> bool:
+        """检查硬件是否真正插上并在位（支持即插即用）"""
+        if not os.path.exists(self.device_path):
+            self._close_device()
+            found = probe_camera_node()
+            if found:
+                self.device_path = found
+                self._init_device()
+            return self.is_connected
+
         if self.fd is None:
             self._init_device()
-            if self.fd is None:
-                return b""
+            return self.is_connected
+
+        try:
+            os.fstat(self.fd)
+            self.is_connected = True
+            return True
+        except Exception:
+            self._close_device()
+            return False
+
+    def _xu_query(self, selector: int, query: int, data: bytes) -> bytes:
+        if not self.check_connection() or self.fd is None:
+            return b""
         data_buf = (ctypes.c_uint8 * len(data))(*data)
         query_struct = UVCIOCControlQuery(
             self.unit_id,
@@ -93,15 +168,14 @@ class RealtekIRController:
             fcntl.ioctl(self.fd, UVCIOC_CTRL_QUERY, query_struct)
             return bytes(data_buf)
         except Exception as e:
-            logger.debug(f"XU Query ioctl: {e}")
+            logger.debug(f"XU Query ioctl ({self.device_path}): {e}")
             return b""
 
     def set_mode(self, is_ir: bool) -> bool:
         """执行经逆向验证的 Realtek 5 步 UVC XU 控制序列"""
-        if not self.is_connected:
-            self._init_device()
-            if not self.is_connected:
-                return False
+        if not self.check_connection():
+            logger.warning(f"无法设置红外模式：未检测到相机硬件 ({self.device_path})")
+            return False
         mode_byte = 0x00 if is_ir else 0x01
         try:
             # 1. 复位
@@ -127,9 +201,9 @@ class RealtekIRController:
 
 class VideoGateway:
     """按需视频捕获网关：仅在 Mac 或客户端订阅时启动视频流，闲时彻底释放相机灭灯"""
-    def __init__(self, device_id: int = 0):
-        self.device_id = device_id
-        self.ir_controller = RealtekIRController(f"/dev/video{device_id}")
+    def __init__(self):
+        initial_node = probe_camera_node() or "/dev/video0"
+        self.ir_controller = RealtekIRController(initial_node)
         self.lock = threading.Lock()
         self.active_viewers = 0
         self.ir_test_active = False
@@ -141,9 +215,30 @@ class VideoGateway:
         self.worker_thread = threading.Thread(target=self._capture_worker, daemon=True)
         self.worker_thread.start()
 
+    @property
+    def device_path(self) -> str:
+        return self.ir_controller.device_path
+
+    @property
+    def device_id(self) -> int:
+        path = self.device_path
+        if path and path.startswith("/dev/video"):
+            try:
+                return int(path.replace("/dev/video", ""))
+            except ValueError:
+                pass
+        return 0
+
+    def is_camera_plugged(self) -> bool:
+        return self.ir_controller.check_connection()
+
     def _open_camera(self, is_ir: bool = False) -> bool:
         if not HAVE_CV:
             return False
+        if not self.is_camera_plugged():
+            logger.warning("未检测到摄像头硬件，请检查 USB 0592WK 是否插入")
+            return False
+
         if self.cap is not None:
             if self.cap.isOpened() and self.current_mode_is_ir == is_ir:
                 return True
@@ -170,10 +265,10 @@ class VideoGateway:
             for _ in range(2):
                 cap.read()
             mode_desc = "🌙 近红外 640x480 YUYV" if is_ir else "📷 可见光 720P MJPG"
-            logger.info(f"摄像头硬件已激活供流 [{mode_desc}]")
+            logger.info(f"摄像头硬件已激活供流 [{mode_desc}] ({self.device_path})")
             return True
         else:
-            logger.warning(f"无法打开摄像头设备 (/dev/video{self.device_id})")
+            logger.warning(f"无法打开摄像头设备 ({self.device_path})")
             return False
 
     def _close_camera(self):
@@ -201,7 +296,8 @@ class VideoGateway:
 
     def _capture_worker(self):
         # 启动时确保红外灯物理断电
-        self.ir_controller.set_mode(False)
+        if self.is_camera_plugged():
+            self.ir_controller.set_mode(False)
 
         while self.is_running:
             with self.lock:
@@ -215,9 +311,17 @@ class VideoGateway:
                 time.sleep(0.2)
                 continue
 
-            # 有客户端拉流，确保相机打开且工作在目标模式
+            # 校验摄像头是否存在
+            if not self.is_camera_plugged():
+                with self.lock:
+                    if self.cap is not None:
+                        self._close_camera()
+                time.sleep(1.0)
+                continue
+
             with self.lock:
                 target_ir = self.ir_test_active
+
                 if self.cap is None or self.current_mode_is_ir != target_ir:
                     if not self._open_camera(is_ir=target_ir):
                         time.sleep(0.5)
@@ -229,11 +333,16 @@ class VideoGateway:
                 jpeg_bytes = jpeg.tobytes()
                 with self.lock:
                     self.latest_jpeg = jpeg_bytes
+            else:
+                self.is_camera_plugged()
 
             time.sleep(0.033)  # 约 30 FPS 高清推流
 
     def get_snapshot(self) -> Optional[bytes]:
         """按需单帧抓拍：用于单次快速核验或间歇在席巡检 (指示灯眨眼 0.08s 随即熄灭)"""
+        if not self.is_camera_plugged():
+            return None
+
         with self.lock:
             if self.cap is not None and self.cap.isOpened():
                 ret, frame = self.cap.read()
@@ -241,7 +350,6 @@ class VideoGateway:
                     _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
                     return jpeg.tobytes()
 
-            # 相机未开启时，原子化极速抓拍单帧后立刻关闭设备灭灯
             target_ir = self.ir_test_active
             cap = cv2.VideoCapture(self.device_id)
             if target_ir:
@@ -283,16 +391,26 @@ gateway = VideoGateway()
 # ==============================================================================
 
 async def handle_status(request):
+    is_plugged = gateway.is_camera_plugged()
     return web.json_response({
         "status": "ok",
         "device": "Dell CN-0592WK (Realtek 0bda:5767)",
-        "is_connected": gateway.ir_controller.is_connected,
+        "is_connected": is_plugged,
+        "device_node": gateway.device_path if is_plugged else None,
         "ir_active": gateway.ir_test_active,
         "viewers": gateway.active_viewers,
-        "camera_streaming": (gateway.cap is not None and gateway.cap.isOpened())
+        "camera_streaming": (gateway.cap is not None and gateway.cap.isOpened()),
+        "message": "摄像头硬件就绪" if is_plugged else "未检测到摄像头硬件插入"
     })
 
 async def handle_ir_toggle(request):
+    if not gateway.is_camera_plugged():
+        return web.json_response({
+            "status": "error",
+            "message": "未检测到摄像头硬件插入",
+            "ir_active": False
+        }, status=503)
+
     new_mode = not gateway.ir_test_active
     gateway.set_ir_test(new_mode)
     return web.json_response({
@@ -302,6 +420,9 @@ async def handle_ir_toggle(request):
     })
 
 async def handle_ir_pulse(request):
+    if not gateway.is_camera_plugged():
+        return web.json_response({"status": "error", "message": "未检测到摄像头硬件插入"}, status=503)
+
     duration = float(request.query.get("duration", 0.5))
     gateway.pulse_ir(duration)
     return web.json_response({
@@ -311,6 +432,9 @@ async def handle_ir_pulse(request):
     })
 
 async def handle_ir_set(request):
+    if not gateway.is_camera_plugged():
+        return web.json_response({"status": "error", "message": "未检测到摄像头硬件插入", "ir_active": False}, status=503)
+
     mode = request.query.get("ir", "0")
     is_ir = (mode == "1" or mode.lower() == "true")
     gateway.set_ir_test(is_ir)
@@ -321,14 +445,20 @@ async def handle_ir_set(request):
 
 async def handle_snapshot(request):
     """获取单帧 JPEG 快照"""
+    if not gateway.is_camera_plugged():
+        return web.Response(status=503, text="Camera hardware not plugged in\n")
+
     loop = asyncio.get_event_loop()
     jpeg_bytes = await loop.run_in_executor(None, gateway.get_snapshot)
     if jpeg_bytes:
         return web.Response(body=jpeg_bytes, content_type="image/jpeg")
-    return web.Response(status=503, text="Camera unavailable")
+    return web.Response(status=503, text="Camera unavailable\n")
 
 async def handle_stream(request):
     """实时 MJPEG 视频流传输通道 (MacHello 客户端直连数据源)"""
+    if not gateway.is_camera_plugged():
+        return web.Response(status=503, text="Camera hardware not plugged in\n")
+
     with gateway.lock:
         gateway.active_viewers += 1
 
@@ -345,6 +475,8 @@ async def handle_stream(request):
 
     try:
         while True:
+            if not gateway.is_camera_plugged():
+                break
             frame_bytes = None
             with gateway.lock:
                 frame_bytes = gateway.latest_jpeg
@@ -370,10 +502,14 @@ async def handle_websocket(request):
     logger.info(f"Mac 客户端已建立 WebSocket 控制长连接: {request.remote}")
 
     # 发送当前硬件就绪状态
+    is_plugged = gateway.is_camera_plugged()
     await ws.send_json({
         "type": "status",
         "device": "Dell CN-0592WK",
-        "ir_active": gateway.ir_controller.current_is_ir
+        "is_connected": is_plugged,
+        "device_node": gateway.device_path if is_plugged else None,
+        "ir_active": gateway.ir_controller.current_is_ir,
+        "message": "摄像头硬件就绪" if is_plugged else "未检测到摄像头硬件插入"
     })
 
     try:
@@ -385,9 +521,12 @@ async def handle_websocket(request):
                     if cmd == "ir_pulse":
                         gateway.pulse_ir(float(data.get("duration", 0.5)))
                     elif cmd == "ir_toggle":
-                        new_mode = not gateway.ir_controller.current_is_ir
-                        gateway.ir_controller.set_mode(new_mode)
-                        await ws.send_json({"type": "ir_status", "ir_active": new_mode})
+                        if gateway.is_camera_plugged():
+                            new_mode = not gateway.ir_controller.current_is_ir
+                            gateway.ir_controller.set_mode(new_mode)
+                            await ws.send_json({"type": "ir_status", "ir_active": new_mode})
+                        else:
+                            await ws.send_json({"type": "error", "message": "摄像头未插入"})
                 except Exception:
                     pass
             elif msg.type == web.WSMsgType.ERROR:
@@ -398,7 +537,12 @@ async def handle_websocket(request):
     return ws
 
 def main():
-    port = int(os.environ.get("PORT", "8765"))
+    import argparse
+    parser = argparse.ArgumentParser(description="MacHello Linux Camera Gateway")
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")), help="Server port (default: 8765)")
+    args, _ = parser.parse_known_args()
+
+    port = args.port
 
     app = web.Application()
     app.router.add_get("/", handle_status)
@@ -416,8 +560,10 @@ def main():
     import atexit
     atexit.register(lambda: gateway.ir_controller.set_mode(False))
 
+    is_plugged = gateway.is_camera_plugged()
     logger.info("======================================================")
     logger.info("  🍏 MacHello Linux Camera Gateway 已就绪 (纯硬件网关模式)")
+    logger.info(f"  📷 硬件状态: {'✓ 检测到摄像头并在位 (' + gateway.device_path + ')' if is_plugged else '❌ 未检测到摄像头插入'}")
     logger.info(f"  👉 API 状态: http://0.0.0.0:{port}/api/status")
     logger.info(f"  👉 视频流源 (Samba 式数据源): http://0.0.0.0:{port}/stream")
     logger.info(f"  👉 单帧快照: http://0.0.0.0:{port}/api/snapshot")

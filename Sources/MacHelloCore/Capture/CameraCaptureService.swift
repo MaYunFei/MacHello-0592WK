@@ -26,7 +26,7 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
 
     public weak var delegate: CameraCaptureDelegate?
     public var isNetworkMode: Bool = false
-    public var networkServerURL: String = "http://192.168.1.100:8765"
+    public var networkServerURL: String = "http://192.168.66.5:8765"
     public private(set) var isRunning: Bool = false
     public var isCameraInverted: Bool = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted") {
         didSet {
@@ -215,6 +215,15 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
         session?.invalidateAndCancel()
         session = nil
         buffer.removeAll()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            print("[NetworkCamera] 视频流连接断开/异常: \(error.localizedDescription)")
+            DispatchQueue.main.async { [weak self] in
+                self?.isRunning = false
+            }
+        }
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {

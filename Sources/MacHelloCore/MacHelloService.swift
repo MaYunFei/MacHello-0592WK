@@ -38,6 +38,8 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isNetworkModeEnabled: Bool = false
     @Published public var linuxServerURL: String = ""
     @Published public var isLinuxConnected: Bool = false
+    @Published public var isLinuxServerReachable: Bool = false
+    @Published public var isLinuxHardwareConnected: Bool = false
     @Published public var linuxLatencyMs: Int = 0
 
     // 摄像头安装朝向 (倒置 180° 安装)
@@ -62,7 +64,10 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
         self.linuxServerURL = linuxClient.serverURLString
         self.isLinuxConnected = linuxClient.isConnected
+        self.isLinuxServerReachable = linuxClient.isServerReachable
+        self.isLinuxHardwareConnected = linuxClient.isHardwareConnected
         self.linuxLatencyMs = linuxClient.serverLatencyMs
+        self.isDeviceConnected = self.isNetworkModeEnabled ? linuxClient.isConnected : irController.isConnected
         self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
         self.cameraService.isCameraInverted = self.isCameraInverted
 
@@ -78,6 +83,9 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isLinuxConnected = isConnected
+                self.isLinuxServerReachable = self.linuxClient.isServerReachable
+                self.isLinuxHardwareConnected = self.linuxClient.isHardwareConnected
+                self.isDeviceConnected = self.isNetworkModeEnabled ? isConnected : self.irController.isConnected
                 self.linuxLatencyMs = self.linuxClient.serverLatencyMs
                 self.objectWillChange.send()
             }
@@ -179,7 +187,17 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     }
 
     public func refreshStatus() {
-        self.isDeviceConnected = irController.isConnected
+        self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
+        self.linuxServerURL = linuxClient.serverURLString
+        if self.isNetworkModeEnabled {
+            linuxClient.measureLatency()
+            self.isLinuxConnected = linuxClient.isConnected
+            self.isLinuxServerReachable = linuxClient.isServerReachable
+            self.isLinuxHardwareConnected = linuxClient.isHardwareConnected
+            self.isDeviceConnected = linuxClient.isConnected
+        } else {
+            self.isDeviceConnected = irController.isConnected
+        }
         self.isIRActive = (irController.currentMode == .ir)
         let profile = FaceDatabase.shared.load()
         self.isEnrolled = !(profile?.samples.isEmpty ?? true)
@@ -193,9 +211,6 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.activeMediaAppName = MediaActivityDetector.shared.activeMediaAppName
         self.isMediaPreventingSleep = (self.activeMediaAppName != nil)
         self.absenceTimeout = autoDisplayService.absenceTimeout
-        self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
-        self.linuxServerURL = linuxClient.serverURLString
-        self.isLinuxConnected = linuxClient.isConnected
         self.linuxLatencyMs = linuxClient.serverLatencyMs
         self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
 
@@ -237,7 +252,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.messageText = "配置局域网 Linux 感应服务"
-            alert.informativeText = "请输入局域网中运行 MacHello Linux 服务的地址（例如 http://192.168.1.100:8765）："
+            alert.informativeText = "请输入局域网中运行 MacHello Linux 服务的地址（例如 http://192.168.66.5:8765）："
             alert.alertStyle = .informational
             alert.addButton(withTitle: "保存并连接")
             alert.addButton(withTitle: "取消")

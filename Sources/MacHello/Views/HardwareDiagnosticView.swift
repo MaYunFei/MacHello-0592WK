@@ -322,17 +322,30 @@ public final class DiagnosticViewModel: ObservableObject {
     }
 
     public func refreshHardwareInfo() {
-        self.isConnected = IRController.shared.isConnected
         if MacHelloService.shared.isNetworkModeEnabled {
-            self.cameraName = "Dell CN-0592WK (局域网 Linux 服务端直连)"
-            self.hardwareConfirmed = true
+            let client = LinuxPresenceClient.shared
+            client.measureLatency()
+            self.isConnected = client.isConnected
+            if !client.isServerReachable {
+                self.cameraName = "未连接到 Linux 服务端 (\(client.serverURLString))"
+                self.hardwareConfirmed = false
+            } else if !client.isHardwareConnected {
+                self.cameraName = "Linux 服务端在线，但未检测到摄像头插入"
+                self.hardwareConfirmed = false
+            } else {
+                self.cameraName = "Dell CN-0592WK (局域网 Linux 服务端直连)"
+                self.hardwareConfirmed = true
+            }
         } else if let dev = AVCaptureDevice.default(for: .video) {
+            self.isConnected = IRController.shared.isConnected
             self.cameraName = "\(dev.localizedName) (\(dev.modelID))"
             if self.isConnected {
                 self.hardwareConfirmed = true
             }
         } else {
+            self.isConnected = false
             self.cameraName = "未找到可用视频设备"
+            self.hardwareConfirmed = false
         }
     }
 
@@ -349,6 +362,9 @@ public final class DiagnosticViewModel: ObservableObject {
         irBadgeText = nil
         rgbImage = nil
         irImage = nil
+        // 彻底清除历史抓拍，杜绝旧照片冒充实时流
+        try? FileManager.default.removeItem(at: DiagnosticFileManager.shared.rgbImagePath)
+        try? FileManager.default.removeItem(at: DiagnosticFileManager.shared.irImagePath)
         statusMessage = "正在连接可见光镜头并拉取实时画面..."
 
         // 诊断测试独占摄像头，避免后台自动睡眠/人脸检测冲突抢占
@@ -390,6 +406,17 @@ public final class DiagnosticViewModel: ObservableObject {
                 Thread.sleep(forTimeInterval: 1.2)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的黑帧污染画面
                 cameraService.stop()
+
+                if rgbHelper.frameCount == 0 {
+                    DiagnosticFileManager.shared.log("Step 1: RGB 测试失败：未能从视频流接收到画面 (捕获 0 帧)")
+                    DispatchQueue.main.async {
+                        self.test1State = .failed("未接收到画面 (捕获 0 帧)")
+                        self.isTesting = false
+                        self.statusMessage = "可见光测试失败：未捕获到视频帧，请检查相机是否正常供流"
+                    }
+                    return
+                }
+
                 rgbHelper.saveSnapshot()
                 DiagnosticFileManager.shared.log("Step 1: RGB 720P 测试完成，捕获 \(rgbHelper.frameCount) 帧")
 
@@ -421,17 +448,30 @@ public final class DiagnosticViewModel: ObservableObject {
             }
 
             // Step 2: 验证 UVC 扩展单元
-            DiagnosticFileManager.shared.log("Step 2: 正在验证 UVC 扩展单元 (0bda:5767)...")
+            DiagnosticFileManager.shared.log("Step 2: 正在验证 UVC 扩展单元与硬件连接...")
             Thread.sleep(forTimeInterval: 0.15)
-            guard irController.isConnected else {
-                DiagnosticFileManager.shared.log("Step 2: 未找到 USB 0bda:5767 接口")
-                DispatchQueue.main.async {
-                    self.test2State = .failed("未找到 USB 0bda:5767 接口")
-                    self.isTesting = false
+            if MacHelloService.shared.isNetworkModeEnabled {
+                guard LinuxPresenceClient.shared.isConnected else {
+                    DiagnosticFileManager.shared.log("Step 2: 局域网 Linux 服务未就绪或未插摄像头")
+                    DispatchQueue.main.async {
+                        self.test2State = .failed("局域网硬件未就绪")
+                        self.isTesting = false
+                        self.statusMessage = "硬件验证失败：局域网服务端未就绪或未插摄像头"
+                    }
+                    return
                 }
-                return
+            } else {
+                guard irController.isConnected else {
+                    DiagnosticFileManager.shared.log("Step 2: 未找到 USB 0bda:5767 接口")
+                    DispatchQueue.main.async {
+                        self.test2State = .failed("未找到 USB 0bda:5767 接口")
+                        self.isTesting = false
+                        self.statusMessage = "未检测到本机 USB 0bda:5767 硬件"
+                    }
+                    return
+                }
             }
-            DiagnosticFileManager.shared.log("Step 2: UVC 扩展单元接口就绪")
+            DiagnosticFileManager.shared.log("Step 2: 硬件与 UVC 扩展单元接口就绪")
             DispatchQueue.main.async {
                 self.test2State = .passed
                 self.test3State = .running
@@ -441,12 +481,24 @@ public final class DiagnosticViewModel: ObservableObject {
             // Step 3: 触发 IR 模式
             DiagnosticFileManager.shared.log("Step 3: 正在下发 UVC 寄存器切换至 IR 模式 (0x00)...")
             Thread.sleep(forTimeInterval: 0.15)
-            let irSuccess = irController.setMode(.ir)
+            var irSuccess = false
+            if MacHelloService.shared.isNetworkModeEnabled {
+                let sem = DispatchSemaphore(value: 0)
+                LinuxPresenceClient.shared.setIRMode(isIR: true) { active in
+                    irSuccess = active
+                    sem.signal()
+                }
+                _ = sem.wait(timeout: .now() + 2.5)
+            } else {
+                irSuccess = irController.setMode(.ir)
+            }
+
             guard irSuccess else {
-                DiagnosticFileManager.shared.log("Step 3: UVC 寄存器写入失败")
+                DiagnosticFileManager.shared.log("Step 3: UVC 寄存器写入失败 / 远程 IR 切换无响应")
                 DispatchQueue.main.async {
-                    self.test3State = .failed("UVC 寄存器写入失败")
+                    self.test3State = .failed("红外切换指令失败")
                     self.isTesting = false
+                    self.statusMessage = "红外模式切换失败，请检查摄像头硬件"
                 }
                 return
             }
@@ -475,6 +527,18 @@ public final class DiagnosticViewModel: ObservableObject {
                 Thread.sleep(forTimeInterval: 1.5)
                 cameraService.delegate = nil // 先断开回调，严防 session 关闭过程中的空帧/黑帧冲刷
                 cameraService.stop()
+
+                if irHelper.frameCount == 0 {
+                    irController.resetToRGB()
+                    DiagnosticFileManager.shared.log("Step 4: 红外测试失败：未能捕获到红外视频帧 (捕获 0 帧)")
+                    DispatchQueue.main.async {
+                        self.test4State = .failed("未捕获到红外帧 (0 帧)")
+                        self.isTesting = false
+                        self.statusMessage = "红外测试失败：未接收到夜视画面，请检查镜头与补光灯"
+                    }
+                    return
+                }
+
                 irHelper.saveSnapshot()
                 irController.resetToRGB()
                 DiagnosticFileManager.shared.log("Step 4: IR 测试完成，捕获 \(irHelper.frameCount) 帧，全部帧已存入 ir_frames/")
@@ -561,7 +625,11 @@ public final class DiagnosticViewModel: ObservableObject {
                     self.irBadgeColor = badgeColor
                     self.test5Detail = step5Text
                     self.test5State = step5State
-                    self.allPassed = true
+                    let passed = (rgbHelper.frameCount > 0 && irHelper.frameCount > 0)
+                    self.allPassed = passed
+                    if passed {
+                        UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
+                    }
                     self.isTesting = false
                     self.statusMessage = finalMessage
                 }
@@ -621,11 +689,11 @@ public struct HardwareDiagnosticView: View {
                         .font(.headline)
                     Spacer()
                     if vm.isConnected {
-                        Label("检测到兼容硬件 (0bda:5767)", systemImage: "checkmark.shield.fill")
+                        Label(MacHelloService.shared.isNetworkModeEnabled ? "局域网硬件已就绪" : "检测到兼容硬件 (0bda:5767)", systemImage: "checkmark.shield.fill")
                             .font(.caption)
                             .foregroundColor(.green)
                     } else {
-                        Label("未检测到目标硬件", systemImage: "exclamationmark.triangle.fill")
+                        Label(MacHelloService.shared.isNetworkModeEnabled ? "局域网服务未就绪 / 未插摄像头" : "未检测到目标硬件", systemImage: "exclamationmark.triangle.fill")
                             .font(.caption)
                             .foregroundColor(.red)
                     }
