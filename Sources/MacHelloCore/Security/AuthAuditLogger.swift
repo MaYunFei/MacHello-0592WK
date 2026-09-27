@@ -13,12 +13,12 @@ public struct AuditRecord: Identifiable, Codable {
 
     public var displayTitle: String {
         switch reason {
-        case "lockscreen": return "锁屏免密自动解锁"
-        case "wake_display": return "人脸靠近感应亮屏"
-        case "admin_prompt": return "系统管理员弹窗提权"
-        case "terminal_sudo": return "终端 Sudo 刷脸认证"
-        case "diagnostic": return "双目硬件链路自检"
-        default: return "面容识别认证"
+        case "lockscreen": return loc("Lock Screen Auto Unlock", "锁屏免密自动解锁")
+        case "wake_display": return loc("Presence Wake Display", "人脸靠近感应亮屏")
+        case "admin_prompt": return loc("Admin Prompt Face ID", "系统管理员弹窗提权")
+        case "terminal_sudo": return loc("Terminal Sudo Face ID", "终端 Sudo 刷脸认证")
+        case "diagnostic": return loc("Hardware Link Diagnostic", "双目硬件链路自检")
+        default: return loc("Face ID Authentication", "面容识别认证")
         }
     }
 

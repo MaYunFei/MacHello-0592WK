@@ -35,7 +35,7 @@ public final class MediaActivityDetector {
         let status = IOPMCopyAssertionsByProcess(&assertionsByProcess)
         guard status == kIOReturnSuccess,
               let dict = assertionsByProcess?.takeRetainedValue() as? [NSNumber: [NSDictionary]] else {
-            return "媒体播放中"
+            return loc("Media Playing", "媒体播放中")
         }
 
         var appNames: [String] = []
@@ -65,7 +65,7 @@ public final class MediaActivityDetector {
         }
 
         if appNames.isEmpty {
-            return "媒体播放中"
+            return loc("Media Playing", "媒体播放中")
         }
 
         return appNames.joined(separator: ", ")

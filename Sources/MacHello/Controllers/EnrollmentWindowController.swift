@@ -26,13 +26,21 @@ public final class EnrollmentWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        newWindow.title = "MacHello 面容 ID 录入"
+        newWindow.title = loc("MacHello Face ID Enrollment", "MacHello 面容 ID 录入")
         newWindow.titlebarAppearsTransparent = true
         newWindow.titleVisibility = .hidden
         newWindow.isReleasedWhenClosed = false
         newWindow.center()
         newWindow.contentViewController = hostingController
         newWindow.delegate = self
+
+        NotificationCenter.default.addObserver(
+            forName: LanguageManager.languageDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak newWindow] _ in
+            newWindow?.title = loc("MacHello Face ID Enrollment", "MacHello 面容 ID 录入")
+        }
 
         self.window = newWindow
         newWindow.makeKeyAndOrderFront(nil)

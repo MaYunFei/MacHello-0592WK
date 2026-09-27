@@ -8,12 +8,11 @@ import AppKit
 final class DarkTestCapture: NSObject, CameraCaptureDelegate {
     let sema = DispatchSemaphore(value: 0)
     var frameCount = 0
-    var targetFrames = 30 // 给予 30 帧 (约 1 秒) 让传感器硬件的夜视自动曝光 (AEC/AGC) 充分提升增益
+    var targetFrames = 30 // Allow 30 frames (~1 sec) for AEC/AGC hardware gain stabilization
     var capturedBuffer: CMSampleBuffer?
 
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool) {
         frameCount += 1
-        // 抓取第 30 帧（经过充分自动曝光增益后的稳定帧）
         if frameCount >= targetFrames {
             capturedBuffer = sampleBuffer
             sema.signal()
@@ -40,7 +39,7 @@ try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirector
 let irPath = "Tests/Snapshots/snapshot_dark_ir.jpg"
 let irGrayPath = "Tests/Snapshots/snapshot_dark_ir_grayscale.jpg"
 
-print("1. 正在打亮 850nm 红外发射管，并等待自动曝光增益调整 (30帧)...")
+print("1. Turning on 850nm IR emitter, waiting for auto-exposure gain adjustment (30 frames)...")
 _ = irController.setMode(.ir)
 let irCapture = DarkTestCapture()
 captureService.delegate = irCapture
@@ -50,27 +49,26 @@ captureService.stop()
 
 if let buf = irCapture.capturedBuffer {
     saveJPEG(sampleBuffer: buf, to: irPath)
-    print("   已保存 IR 原色彩图: \(irPath)")
+    print("   Saved raw IR image: \(irPath)")
 
-    // 保存纯灰度图 (Grayscale)
     if let pixelBuffer = CMSampleBufferGetImageBuffer(buf) {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let filter = CIFilter(name: "CIColorControls")
         filter?.setValue(ciImage, forKey: kCIInputImageKey)
-        filter?.setValue(0.0, forKey: kCIInputSaturationKey) // 去色纯灰度
+        filter?.setValue(0.0, forKey: kCIInputSaturationKey)
         if let outImg = filter?.outputImage {
             let ctx = CIContext()
             let colorSpace = CGColorSpaceCreateDeviceRGB()
             if let grayData = ctx.jpegRepresentation(of: outImg, colorSpace: colorSpace, options: [:]) {
                 try? grayData.write(to: URL(fileURLWithPath: irGrayPath))
-                print("   已保存 IR 纯灰度图: \(irGrayPath)")
+                print("   Saved IR grayscale image: \(irGrayPath)")
             }
         }
     }
 } else {
-    print("❌ 未捕获到 IR 视频帧")
+    print("❌ No IR frames captured")
 }
 
-// 安全复位
+// Reset
 irController.resetToRGB()
-print("2. 硬件已安全复位至 RGB 模式。")
+print("2. Hardware safely reset to RGB mode.")

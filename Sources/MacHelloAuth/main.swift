@@ -20,14 +20,14 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
 
     func authenticate() -> Bool {
         guard faceDb.isEnrolled, let profile = faceDb.load() else {
-            fputs("[MacHello] 未录入任何人脸特征，请先通过菜单或 MacHelloEnroll 录入\n", stderr)
+            fputs("[MacHello] No enrolled face profile found. Please enroll via Menu or MacHelloEnroll.\n", stderr)
             return false
         }
 
         // 1. 权限预检：解决首次在此终端使用时弹窗等待用户点击而导致的“超时”问题
         let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
         if authStatus == .notDetermined {
-            fputs("[MacHello] 首次在此应用中使用，请在弹出的系统对话框中点击「好」以允许摄像头...\n", stderr)
+            fputs("[MacHello] First time running in this terminal, please allow camera access...\n", stderr)
             fflush(stderr)
             let authSema = DispatchSemaphore(value: 0)
             var accessGranted = false
@@ -39,11 +39,11 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
             _ = authSema.wait(timeout: .now() + 30.0)
 
             guard accessGranted else {
-                fputs("[MacHello] 摄像头权限被拒绝，请在「系统设置 ➔ 隐私与安全性 ➔ 摄像头」中允许。\n", stderr)
+                fputs("[MacHello] Camera permission denied. Allow in System Settings -> Privacy & Security -> Camera.\n", stderr)
                 return false
             }
         } else if authStatus == .denied || authStatus == .restricted {
-            fputs("[MacHello] 摄像头访问权限被拒绝，请在「系统设置 ➔ 隐私与安全性 ➔ 摄像头」中允许。\n", stderr)
+            fputs("[MacHello] Camera access denied. Allow in System Settings -> Privacy & Security -> Camera.\n", stderr)
             return false
         }
 
@@ -55,7 +55,7 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
         let isHardwareConnected = irController.isConnected
         let useIR = preferIR && isHardwareConnected
 
-        fputs("[MacHello] 正在识别人脸...", stderr)
+        fputs("[MacHello] Verifying face...", stderr)
         fflush(stderr)
 
         do {
@@ -66,7 +66,7 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
                 try cameraService.start(mode: .rgb)
             }
         } catch {
-            fputs("\n[MacHello] 启动摄像头失败: \(error.localizedDescription)\n", stderr)
+            fputs("\n[MacHello] Failed to start camera: \(error.localizedDescription)\n", stderr)
             return false
         }
 
@@ -78,15 +78,15 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
             lock.lock()
             isFinished = true
             lock.unlock()
-            fputs("\n[MacHello] 人脸识别超时，退回密码验证\n", stderr)
+            fputs("\n[MacHello] Face recognition timed out, falling back to password.\n", stderr)
             return false
         }
 
         if isAuthenticated {
-            fputs(" ✓ 验证通过 (机主: \(profile.username))\n", stderr)
+            fputs(" ✓ Verified (User: \(profile.username))\n", stderr)
             return true
         } else {
-            fputs("\n[MacHello] 人脸未匹配，退回密码验证\n", stderr)
+            fputs("\n[MacHello] Face not recognized, falling back to password.\n", stderr)
             return false
         }
     }

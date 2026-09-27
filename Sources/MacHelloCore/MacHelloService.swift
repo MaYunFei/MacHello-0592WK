@@ -107,6 +107,13 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
 
         // 监听系统级摄像头设备热插拔（即插即用）
         NotificationCenter.default.addObserver(
+            forName: LanguageManager.languageDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleCameraDeviceChange),
             name: AVCaptureDevice.wasConnectedNotification,
@@ -251,11 +258,14 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public func promptForLinuxServerURL() {
         DispatchQueue.main.async {
             let alert = NSAlert()
-            alert.messageText = "配置局域网 Linux 感应服务"
-            alert.informativeText = "请输入局域网中运行 MacHello Linux 服务的地址（例如 http://192.168.66.5:8765）："
+            alert.messageText = loc("Configure Linux Gateway Service", "配置局域网 Linux 感应服务")
+            alert.informativeText = loc(
+                "Enter the address of your MacHello Linux gateway (e.g., http://192.168.66.5:8765):",
+                "请输入局域网中运行 MacHello Linux 服务的地址（例如 http://192.168.66.5:8765）："
+            )
             alert.alertStyle = .informational
-            alert.addButton(withTitle: "保存并连接")
-            alert.addButton(withTitle: "取消")
+            alert.addButton(withTitle: loc("Save & Connect", "保存并连接"))
+            alert.addButton(withTitle: loc("Cancel", "取消"))
 
             let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
             input.stringValue = self.linuxServerURL
@@ -295,17 +305,17 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         let isPreventing = (currentApp != nil)
 
         if !respectMediaPlayback {
-            return "   视频观影/在线会议免打扰 (已关闭)"
+            return "   " + loc("Media / Meeting Do-Not-Disturb (Disabled)", "视频观影/在线会议免打扰 (已关闭)")
         }
 
         if isPreventing {
             if let name = currentApp, !name.isEmpty {
-                return "✓ 视频观影/在线会议免打扰 🟢 运行中 (\(name))"
+                return "✓ " + loc("Media / Meeting DND 🟢 Active (\(name))", "视频观影/在线会议免打扰 🟢 运行中 (\(name))")
             } else {
-                return "✓ 视频观影/在线会议免打扰 🟢 运行中"
+                return "✓ " + loc("Media / Meeting DND 🟢 Active", "视频观影/在线会议免打扰 🟢 运行中")
             }
         } else {
-            return "✓ 视频观影/在线会议免打扰 (⚪ 待命中)"
+            return "✓ " + loc("Media / Meeting DND (⚪ Standby)", "视频观影/在线会议免打扰 (⚪ 待命中)")
         }
     }
 
@@ -339,7 +349,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             alert.messageText = title
             alert.informativeText = message
             alert.alertStyle = .warning
-            alert.addButton(withTitle: "好的")
+            alert.addButton(withTitle: loc("OK", "好的"))
             alert.runModal()
         }
     }
@@ -420,14 +430,17 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public func promptToStorePassword() {
         DispatchQueue.main.async {
             let alert = NSAlert()
-            alert.messageText = "设置系统免密解锁密码"
-            alert.informativeText = "该密码将被加密保存在 macOS 原生安全钥匙串 (Keychain) 中。仅在 850nm 红外相机精准比对机主本人面容成功后，才会由底层辅助功能模拟输入解锁。"
+            alert.messageText = loc("Set System Unlock Password", "设置系统免密解锁密码")
+            alert.informativeText = loc(
+                "Your password is encrypted and securely saved in the native macOS Keychain. It is simulated via accessibility ONLY when your face matches the 850nm IR biometrics.",
+                "该密码将被加密保存在 macOS 原生安全钥匙串 (Keychain) 中。仅在 850nm 红外相机精准比对机主本人面容成功后，才会由底层辅助功能模拟输入解锁。"
+            )
             alert.alertStyle = .informational
-            alert.addButton(withTitle: "保存密码")
-            alert.addButton(withTitle: "取消")
+            alert.addButton(withTitle: loc("Save Password", "保存密码"))
+            alert.addButton(withTitle: loc("Cancel", "取消"))
 
             let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-            input.placeholderString = "请输入当前账户的登录/管理员密码"
+            input.placeholderString = loc("Enter current account login / admin password", "请输入当前账户的登录/管理员密码")
             alert.accessoryView = input
 
             NSApp.activate(ignoringOtherApps: true)

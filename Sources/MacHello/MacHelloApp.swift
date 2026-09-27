@@ -5,6 +5,7 @@ import MacHelloCore
 @main
 struct MacHelloApp: App {
     @StateObject private var service = MacHelloService.shared
+    @ObservedObject private var lang = LanguageManager.shared
 
     init() {
         // 首次打开或未确认硬件时，自动弹出硬件自检与设备确认向导
@@ -24,33 +25,33 @@ struct MacHelloApp: App {
             Section {
                 if service.isNetworkModeEnabled {
                     if !service.isLinuxServerReachable {
-                        Label("未连接到 Linux 服务端", systemImage: "wifi.exclamationmark")
+                        Label(loc("Disconnected from Linux server", "未连接到 Linux 服务端"), systemImage: "wifi.exclamationmark")
                     } else if !service.isLinuxConnected {
-                        Label("Linux 服务端在线 (未检测到摄像头)", systemImage: "exclamationmark.triangle")
+                        Label(loc("Linux server online (camera not found)", "Linux 服务端在线 (未检测到摄像头)"), systemImage: "exclamationmark.triangle")
                     } else {
-                        Label("Linux 局域网硬件已就绪 (\(service.linuxLatencyMs) ms)", systemImage: "network")
+                        Label(loc("Linux gateway ready (\(service.linuxLatencyMs) ms)", "Linux 局域网硬件已就绪 (\(service.linuxLatencyMs) ms)"), systemImage: "network")
                     }
                 } else {
                     if service.isDeviceConnected {
-                        Label("Dell CN-0592WK (USB 直连)", systemImage: "checkmark.circle.fill")
+                        Label(loc("Dell CN-0592WK (USB Direct)", "Dell CN-0592WK (USB 直连)"), systemImage: "checkmark.circle.fill")
                     } else {
-                        Label("未检测到 0592WK 摄像头", systemImage: "xmark.circle")
+                        Label(loc("0592WK camera not found", "未检测到 0592WK 摄像头"), systemImage: "xmark.circle")
                     }
                 }
 
                 if service.isEnrolled {
-                    Label("已录入 \(service.enrolledSamplesCount) 组面容特征", systemImage: "faceid")
+                    Label(loc("\(service.enrolledSamplesCount) face sample sets enrolled", "已录入 \(service.enrolledSamplesCount) 组面容特征"), systemImage: "faceid")
                 } else {
-                    Label("面容 ID: 尚未录入数据", systemImage: "person.crop.circle.badge.plus")
+                    Label(loc("Face ID: Not enrolled", "面容 ID: 尚未录入数据"), systemImage: "person.crop.circle.badge.plus")
                 }
 
                 if service.isNetworkModeEnabled && service.isAutoDisplayEnabled {
                     if service.isOwnerVerified {
-                        Label("实时状态：机主在位", systemImage: "person.fill.checkmark")
+                        Label(loc("Presence: Owner present", "实时状态：机主在位"), systemImage: "person.fill.checkmark")
                     } else if service.isPersonPresent {
-                        Label("实时状态：有人在视野内", systemImage: "person.fill")
+                        Label(loc("Presence: Person in view", "实时状态：有人在视野内"), systemImage: "person.fill")
                     } else {
-                        Label("实时状态：桌前无人", systemImage: "person.slash")
+                        Label(loc("Presence: Nobody in view", "实时状态：桌前无人"), systemImage: "person.slash")
                     }
                 }
             }
@@ -58,12 +59,12 @@ struct MacHelloApp: App {
             Divider()
 
             // 2. 部署模式与镜头朝向
-            Menu("工作模式: \(service.isNetworkModeEnabled ? "局域网 Linux" : "本机 USB 直连")") {
+            Menu(loc("Mode: \(service.isNetworkModeEnabled ? "Linux Gateway" : "USB Direct")", "工作模式: \(service.isNetworkModeEnabled ? "局域网 Linux" : "本机 USB 直连")")) {
                 Button {
                     if service.isNetworkModeEnabled { service.toggleNetworkMode() }
                 } label: {
                     HStack {
-                        Text("本机 USB 直连 (无操作锁屏 + 唤醒瞬间 0.5s 刷脸)")
+                        Text(loc("USB Direct (Lock on idle + 0.5s Face ID on wake)", "本机 USB 直连 (无操作锁屏 + 唤醒瞬间 0.5s 刷脸)"))
                         if !service.isNetworkModeEnabled {
                             Image(systemName: "checkmark")
                         }
@@ -74,7 +75,7 @@ struct MacHelloApp: App {
                     if !service.isNetworkModeEnabled { service.toggleNetworkMode() }
                 } label: {
                     HStack {
-                        Text("局域网 Linux 智能服务 (全天候 24h 人体感应 + 0 绿点)")
+                        Text(loc("Linux Gateway (24/7 presence sensing + 0 green dot)", "局域网 Linux 智能服务 (全天候 24h 人体感应 + 0 绿点)"))
                         if service.isNetworkModeEnabled {
                             Image(systemName: "checkmark")
                         }
@@ -83,12 +84,12 @@ struct MacHelloApp: App {
 
                 if service.isNetworkModeEnabled {
                     Divider()
-                    Text("服务端: \(service.linuxServerURL)")
-                    Button("配置 Linux 服务端地址") {
+                    Text(loc("Server: \(service.linuxServerURL)", "服务端: \(service.linuxServerURL)"))
+                    Button(loc("Configure Linux Server URL", "配置 Linux 服务端地址")) {
                         service.promptForLinuxServerURL()
                     }
                     if service.isLinuxConnected {
-                        Button("在浏览器中查看实时监控流") {
+                        Button(loc("View Live Stream in Browser", "在浏览器中查看实时监控流")) {
                             if let url = URL(string: "\(service.linuxServerURL)/stream") {
                                 NSWorkspace.shared.open(url)
                             }
@@ -97,7 +98,7 @@ struct MacHelloApp: App {
                 }
             }
 
-            Toggle("倒置安装模式 (旋转 180°)", isOn: Binding(
+            Toggle(loc("Inverted Mount Mode (Rotate 180°)", "倒置安装模式 (旋转 180°)"), isOn: Binding(
                 get: { service.isCameraInverted },
                 set: { _ in service.toggleCameraInverted() }
             ))
@@ -106,7 +107,9 @@ struct MacHelloApp: App {
 
             // 3. 屏幕电源与自动化感应
             Toggle(
-                service.isNetworkModeEnabled ? "局域网智能感应 (走开息屏 / 来人亮屏)" : "无操作自动锁屏 (BLEUnlock 模式)",
+                service.isNetworkModeEnabled
+                    ? loc("Linux Smart Presence (Walk-away sleep / Approach wake)", "局域网智能感应 (走开息屏 / 来人亮屏)")
+                    : loc("Auto Lock on Idle (BLEUnlock mode)", "无操作自动锁屏 (BLEUnlock 模式)"),
                 isOn: Binding(
                     get: { service.isAutoDisplayEnabled },
                     set: { _ in service.toggleAutoDisplay() }
@@ -120,14 +123,14 @@ struct MacHelloApp: App {
                     set: { _ in service.toggleRespectMediaPlayback() }
                 ))
 
-                Menu("无操作锁屏等待时长: \(Int(service.absenceTimeout)) 秒") {
+                Menu(loc("Idle Lock Timeout: \(Int(service.absenceTimeout))s", "无操作锁屏等待时长: \(Int(service.absenceTimeout)) 秒")) {
                     let timeouts: [(TimeInterval, String)] = [
-                        (15, "15 秒 (测试快速体验)"),
-                        (30, "30 秒 (测试推荐)"),
-                        (60, "1 分钟"),
-                        (180, "3 分钟"),
-                        (300, "5 分钟 (日常推荐)"),
-                        (600, "10 分钟")
+                        (15, loc("15 seconds (Quick test)", "15 秒 (测试快速体验)")),
+                        (30, loc("30 seconds (Recommended test)", "30 秒 (测试推荐)")),
+                        (60, loc("1 minute", "1 分钟")),
+                        (180, loc("3 minutes", "3 分钟")),
+                        (300, loc("5 minutes (Daily recommended)", "5 分钟 (日常推荐)")),
+                        (600, loc("10 minutes", "10 分钟"))
                     ]
                     ForEach(timeouts, id: \.0) { sec, title in
                         Button {
@@ -150,7 +153,7 @@ struct MacHelloApp: App {
             Button {
                 DiagnosticWindowController.shared.showWindow()
             } label: {
-                Label("硬件自检与设备确认", systemImage: "wrench.and.screwdriver")
+                Label(loc("Hardware Diagnostics & Setup", "硬件自检与设备确认"), systemImage: "wrench.and.screwdriver")
             }
             .disabled(!service.isDeviceConnected && !service.isNetworkModeEnabled)
 
@@ -158,57 +161,67 @@ struct MacHelloApp: App {
                 service.refreshStatus()
                 EnrollmentWindowController.shared.showWindow()
             } label: {
-                Label(service.isEnrolled ? "重新录入 / 添加替用外观" : "设置面容 ID", systemImage: "person.crop.circle.badge.plus")
+                Label(
+                    service.isEnrolled
+                        ? loc("Re-enroll / Add Alternative Appearance", "重新录入 / 添加替用外观")
+                        : loc("Set Up Face ID", "设置面容 ID"),
+                    systemImage: "person.crop.circle.badge.plus"
+                )
             }
             .disabled(!service.isDeviceConnected && !service.isNetworkModeEnabled)
 
             Button {
                 service.toggleIRTest()
             } label: {
-                Label(service.isIRActive ? "熄灭红外测试灯" : "点亮红外测试灯", systemImage: service.isIRActive ? "moon.stars.fill" : "moon.stars")
+                Label(
+                    service.isIRActive
+                        ? loc("Turn Off IR Test LED", "熄灭红外测试灯")
+                        : loc("Turn On IR Test LED", "点亮红外测试灯"),
+                    systemImage: service.isIRActive ? "moon.stars.fill" : "moon.stars"
+                )
             }
             .disabled(!service.isDeviceConnected && !service.isNetworkModeEnabled)
 
             Divider()
 
             // 5. 权限提权与全场景免密
-            Toggle("终端 Sudo 刷脸免密提权", isOn: Binding(
+            Toggle(loc("Terminal Sudo Face ID Unlock", "终端 Sudo 刷脸免密提权"), isOn: Binding(
                 get: { service.isPAMInstalled },
                 set: { _ in service.togglePAMInstallation() }
             ))
 
-            Menu("全场景 Face ID 自动免密授权") {
-                Toggle("应用管理员弹窗 Face ID 自动认证", isOn: Binding(
+            Menu(loc("Full Face ID Auto-Auth Settings", "全场景 Face ID 自动免密授权")) {
+                Toggle(loc("Admin Prompt Face ID Auto-Auth", "应用管理员弹窗 Face ID 自动认证"), isOn: Binding(
                     get: { service.isAppAuthEnabled },
                     set: { _ in service.toggleAppAuth() }
                 ))
 
-                Toggle("锁屏感应唤醒自动解锁进桌面", isOn: Binding(
+                Toggle(loc("Lock Screen Auto-Unlock on Wake", "锁屏感应唤醒自动解锁进桌面"), isOn: Binding(
                     get: { service.isLockScreenUnlockEnabled },
                     set: { _ in service.toggleLockScreenUnlock() }
                 ))
 
-                Toggle("播放 Face ID 认证成功提示音", isOn: Binding(
+                Toggle(loc("Play Sound on Face ID Success", "播放 Face ID 认证成功提示音"), isOn: Binding(
                     get: { service.isAudioFeedbackEnabled },
                     set: { _ in service.toggleAudioFeedback() }
                 ))
 
-                Button("试听认证提示音") {
+                Button(loc("Play Test Success Sound", "试听认证提示音")) {
                     service.playTestAudio()
                 }
 
                 Divider()
 
                 if service.hasStoredPassword {
-                    Text("钥匙串密码：已安全保存 ✓")
-                    Button("更新钥匙串密码") {
+                    Text(loc("Keychain Password: Saved ✓", "钥匙串密码：已安全保存 ✓"))
+                    Button(loc("Update Keychain Password", "更新钥匙串密码")) {
                         service.promptToStorePassword()
                     }
-                    Button("清除保存的密码") {
+                    Button(loc("Remove Saved Password", "清除保存的密码")) {
                         service.deleteStoredPassword()
                     }
                 } else {
-                    Button("设置钥匙串免密解锁密码") {
+                    Button(loc("Set Unlock Password in Keychain", "设置钥匙串免密解锁密码")) {
                         service.promptToStorePassword()
                     }
                 }
@@ -216,29 +229,44 @@ struct MacHelloApp: App {
                 Divider()
 
                 if service.isAccessibilityTrusted {
-                    Text("辅助功能权限：已获得 ✓")
+                    Text(loc("Accessibility Permission: Granted ✓", "辅助功能权限：已获得 ✓"))
                 } else {
-                    Button("授予辅助功能权限 (打开系统设置)") {
+                    Button(loc("Grant Accessibility Permission", "授予辅助功能权限 (打开系统设置)")) {
                         service.openAccessibilitySettings()
                     }
                 }
 
                 Divider()
 
-                Button("测试管理员提权弹窗 (Face ID)") {
+                Button(loc("Test Admin Prompt (Face ID)", "测试管理员提权弹窗 (Face ID)")) {
                     service.triggerAdminPromptTest()
                 }
 
-                Button("查看通行抓拍与识别历史") {
+                Button(loc("View Access & Snapshot History", "查看通行抓拍与识别历史")) {
                     AuditHistoryWindowController.shared.showWindow()
                 }
             }
 
-            // 6. 系统开机启动与退出
-            Toggle("登录时自动启动 (开机自启)", isOn: Binding(
+            // 6. 系统开机启动、语言与退出
+            Toggle(loc("Launch at Login", "登录时自动启动 (开机自启)"), isOn: Binding(
                 get: { service.isLaunchAtLoginEnabled },
                 set: { _ in service.toggleLaunchAtLogin() }
             ))
+
+            Menu(loc("Language: \(lang.currentDisplayName)", "界面语言: \(lang.currentDisplayName)")) {
+                ForEach(AppLanguage.allCases) { item in
+                    Button {
+                        lang.selectedLanguage = item
+                    } label: {
+                        HStack {
+                            Text(item.title)
+                            if lang.selectedLanguage == item {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
 
             Divider()
 
@@ -246,11 +274,11 @@ struct MacHelloApp: App {
                 Button(role: .destructive) {
                     service.clearFaceData()
                 } label: {
-                    Label("清除本地面容数据", systemImage: "trash")
+                    Label(loc("Clear Local Face Data", "清除本地面容数据"), systemImage: "trash")
                 }
             }
 
-            Button("退出 MacHello") {
+            Button(loc("Quit MacHello", "退出 MacHello")) {
                 EnrollmentWindowController.shared.closeWindow()
                 DiagnosticWindowController.shared.closeWindow()
                 AuditHistoryWindowController.shared.closeWindow()

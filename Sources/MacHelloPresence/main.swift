@@ -19,25 +19,25 @@ final class PresenceMonitorDelegate: CameraCaptureDelegate, PresenceDetectorDele
     func presenceDetector(_ detector: PresenceDetector, didChangePresence isPresent: Bool, faceCount: Int) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         if isPresent {
-            print("[\(timestamp)] 🟢【有人】检测到目标出现在摄像头前！（人脸数: \(faceCount)）已弹出系统通知 🔔")
+            print("[\(timestamp)] 🟢 [PRESENT] Target detected in front of camera! (Faces: \(faceCount)) Notification sent 🔔")
         } else {
-            print("[\(timestamp)] ⚪️【无人】目标已离开摄像头视野。")
+            print("[\(timestamp)] ⚪️ [AWAY] Target left camera field of view.")
         }
     }
 }
 
 print("""
 ======================================================
-  MacHello 人体感应监控器 (Human Presence Monitor)
-  - 硬件: Dell 0592WK (0bda:5767)
-  - 算法: Apple Vision Framework (NPU 实时检测)
-  - 响应: 检测到有人时自动推送 macOS 系统横幅通知
+  MacHello Human Presence Monitor
+  - Hardware: Dell CN-0592WK (0bda:5767)
+  - Engine: Apple Vision Framework (NPU real-time detection)
+  - Response: Auto push macOS banner notification when present
 ======================================================
 """)
 
 let irController = IRController.shared
 guard irController.isConnected else {
-    print("❌ 错误: 未检测到戴尔 0592WK 摄像头模组。")
+    print("❌ Error: Dell 0592WK camera module not detected.")
     exit(1)
 }
 
@@ -47,21 +47,21 @@ captureService.delegate = monitor
 
 // 处理 Ctrl+C 安全退出
 signal(SIGINT) { _ in
-    print("\n🛑 收到退出信号，正在停止视频流并复位硬件...")
+    print("\n🛑 Interrupt received, stopping video stream and resetting hardware...")
     CameraCaptureService.shared.stop()
     IRController.shared.resetToRGB()
-    print("👋 退出完成。")
+    print("👋 Exited.")
     exit(0)
 }
 
 do {
-    print("🎥 正在启动可见光环境检测流 (RGB 720P)...")
+    print("🎥 Starting visible ambient light detection stream (RGB 720P)...")
     try captureService.start(mode: .rgb)
-    print("👁️ 感应器已就绪！请将脸面对/移出摄像头视野进行测试 (按 Ctrl+C 退出)\n")
+    print("👁️ Sensor ready! Move face into/out of camera field of view to test (Press Ctrl+C to exit)\n")
 
     RunLoop.main.run()
 } catch {
-    print("❌ 启动失败: \(error)")
+    print("❌ Start failed: \(error)")
     irController.resetToRGB()
     exit(1)
 }

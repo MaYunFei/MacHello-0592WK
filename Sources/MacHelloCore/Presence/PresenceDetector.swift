@@ -92,8 +92,8 @@ public final class PresenceDetector {
                 self.onPersonArrived?()
                 if self.autoNotify {
                     SystemNotifier.shared.postNotification(
-                        title: "MacHello 人体感应器",
-                        body: "有人进入视野（检测到 \(faceCount) 张面孔）"
+                        title: loc("MacHello Human Presence", "MacHello 人体感应器"),
+                        body: loc("Person entered field of view (\(faceCount) face\(faceCount > 1 ? "s" : "") detected)", "有人进入视野（检测到 \(faceCount) 张面孔）")
                     )
                 }
             } else {

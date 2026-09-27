@@ -1,8 +1,9 @@
 #!/bin/bash
 if systemctl is-active --quiet machello-server 2>/dev/null; then
-    echo "🛑 通过 systemd 停止 MacHello Server..."
+    echo "🛑 Stopping MacHello Server via systemd..."
     sudo systemctl stop machello-server || systemctl stop machello-server
+    exit 0
 fi
 
-pkill -f 'machello_server.py' 2>/dev/null || true
-echo "MacHello Server 已停止"
+pkill -9 -f 'machello_server.py' 2>/dev/null || true
+echo "🛑 MacHello Server stopped."

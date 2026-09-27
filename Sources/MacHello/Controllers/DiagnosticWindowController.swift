@@ -32,13 +32,21 @@ public final class DiagnosticWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        newWindow.title = "MacHello 硬件自检与设备确认"
+        newWindow.title = loc("MacHello Hardware Diagnostics & Device Verification", "MacHello 硬件自检与设备确认")
         newWindow.titlebarAppearsTransparent = true
         newWindow.titleVisibility = .hidden
         newWindow.isReleasedWhenClosed = false
         newWindow.center()
         newWindow.contentViewController = hostingController
         newWindow.delegate = self
+
+        NotificationCenter.default.addObserver(
+            forName: LanguageManager.languageDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak newWindow] _ in
+            newWindow?.title = loc("MacHello Hardware Diagnostics & Device Verification", "MacHello 硬件自检与设备确认")
+        }
 
         self.window = newWindow
         newWindow.makeKeyAndOrderFront(nil)

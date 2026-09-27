@@ -18,11 +18,11 @@ final class EnrollmentCLIHandler: FaceEnrollmentDelegate {
 
     func enrollmentDidCapturePose(stage: EnrollmentStage, pose: TargetPose) {
         NSSound.beep()
-        print("\n  ✅ 已捕捉角度: [\(pose.rawValue)]")
+        print("\n  ✅ Captured pose: [\(pose.title)]")
     }
 
     func enrollmentStageDidComplete(stage: EnrollmentStage) {
-        print("\n\n🎉 阶段完成: 【\(stage.rawValue)】已成功录入！")
+        print("\n\n🎉 Stage Complete: [\(stage.title)] enrolled successfully!")
         sema.signal()
     }
 
@@ -30,41 +30,41 @@ final class EnrollmentCLIHandler: FaceEnrollmentDelegate {
         print("""
 
 ======================================================
-  ✨ 面容 ID 全部录入成功！
-  - 录入特征样本总数: \(totalSamples) 个
-  - 包含外观: 日常/佩戴眼镜外观 + 脱镜/替用外观
-  - 数据安全保存在: ~/.machello/faces.json
+  ✨ Face ID Enrollment Complete!
+  - Total biometric sample sets: \(totalSamples)
+  - Appearances: Regular/Glasses + Alternative Appearance
+  - Securely stored at: ~/.machello/faces.json
 ======================================================
 """)
     }
 
     func enrollmentDidFail(error: String) {
-        print("\n❌ 录入失败: \(error)")
+        print("\n❌ Enrollment failed: \(error)")
         sema.signal()
     }
 }
 
 print("""
 ======================================================
-  🍏 MacHello 面容 ID 红外录入向导
-  - 硬件: Dell 0592WK (0bda:5767) 硬件双目红外模组
-  - 核心: Apple Neural Engine (NPU) 原生 128 维特征提取
-  - 特性: 仿 iPhone 环形头姿引导 + 戴镜/脱镜双外观录入
+  🍏 MacHello Face ID Enrollment Wizard (CLI)
+  - Hardware: Dell CN-0592WK (0bda:5767) Dual-Sensor IR
+  - Engine: Apple Neural Engine (ANE) Vision biometrics
+  - Mode: Circular head pose guidance + Dual appearances
 ======================================================
 """)
 
 let irController = IRController.shared
 guard irController.isConnected else {
-    print("❌ 错误: 未检测到戴尔 0592WK 摄像头模组，请检查 USB 连接。")
+    print("❌ Error: Dell 0592WK camera module not detected. Check USB connection.")
     exit(1)
 }
 
 // 退出信号保护
 signal(SIGINT) { _ in
-    print("\n\n🛑 录入已中断，正在安全复位硬件...")
+    print("\n\n🛑 Enrollment interrupted, resetting hardware...")
     FaceEnrollmentService.shared.stopEnrollment()
     IRController.shared.resetToRGB()
-    print("👋 退出完成。")
+    print("👋 Exited.")
     exit(0)
 }
 
@@ -73,14 +73,14 @@ let enrollmentService = FaceEnrollmentService.shared
 enrollmentService.delegate = handler
 
 print("""
-【第 1/2 轮】：录入日常/佩戴眼镜外观
-👉 提示: 如果您平时佩戴眼镜，请戴上眼镜；如果不戴，保持平时自然状态即可。
-按 [回车键 Enter] 开启红外镜头并开始录入...
+[Stage 1/2]: Regular / Glasses Appearance
+👉 Note: If you wear glasses daily, please put them on; otherwise, stay natural.
+Press [Enter] to start IR camera and begin enrollment...
 """)
 _ = readLine()
 
 do {
-    print("🌙 正在开启 850nm 红外夜视镜头与特征追踪...")
+    print("🌙 Starting 850nm IR camera & feature tracking...")
     try enrollmentService.startEnrollment(stage: .regular)
     handler.sema.wait()
 
@@ -88,25 +88,25 @@ do {
     print("""
 
 ------------------------------------------------------
-【第 2/2 轮】：录入脱镜/替用外貌 (Alternative Appearance)
-👉 提示: 请摘下眼镜，我们将录入未戴眼镜时的纯面部红外特征。
-   (这样无论你平时戴镜，还是睡醒脱镜，都能瞬间解锁)
+[Stage 2/2]: Alternative Appearance (Without Glasses)
+👉 Note: Please remove your glasses so we can record raw IR facial biometrics.
+   (This allows instant unlock whether wearing glasses or waking up without them)
 
-按 [回车键 Enter] 开始脱镜录入 (输入 's' 并回车可跳过): 
+Press [Enter] to start (or enter 's' to skip): 
 """, terminator: "")
 
     let choice = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     if choice == "s" || choice == "skip" {
-        print("⏩ 已跳过替用外观录入。")
+        print("⏩ Skipped alternative appearance.")
         enrollmentService.skipAlternativeStage()
     } else {
-        print("🌙 正在继续脱镜特征录入...")
+        print("🌙 Starting alternative appearance enrollment...")
         try enrollmentService.startAlternativeStage()
         handler.sema.wait()
     }
 
 } catch {
-    print("❌ 启动录入失败: \(error)")
+    print("❌ Enrollment failed to start: \(error)")
     enrollmentService.stopEnrollment()
     exit(1)
 }

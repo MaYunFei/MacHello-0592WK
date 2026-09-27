@@ -4,16 +4,25 @@ import MacHelloCore
 
 public struct AuditHistoryView: View {
     @ObservedObject private var logger = AuthAuditLogger.shared
+    @ObservedObject private var lang = LanguageManager.shared
     @State private var selectedRecordId: String?
     @State private var filterMode: AuditFilter = .all
     @State private var showClearConfirm: Bool = false
 
     enum AuditFilter: String, CaseIterable, Identifiable {
-        case all = "全部"
-        case passed = "验证通过"
-        case failed = "未通过"
+        case all
+        case passed
+        case failed
 
         var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: return loc("All", "全部")
+            case .passed: return loc("Passed", "验证通过")
+            case .failed: return loc("Failed", "未通过")
+            }
+        }
     }
 
     var onDismiss: () -> Void
@@ -78,13 +87,13 @@ public struct AuditHistoryView: View {
         .background(Color(NSColor.windowBackgroundColor))
         .alert(isPresented: $showClearConfirm) {
             Alert(
-                title: Text("清空所有通行抓拍历史？"),
-                message: Text("此操作将永久删除保存在 ~/.machello/history/ 下的所有实况照片与历史记录。"),
-                primaryButton: .destructive(Text("确认清空")) {
+                title: Text(loc("Clear All Access History?", "清空所有通行抓拍历史？")),
+                message: Text(loc("This permanently deletes all snapshots and history in ~/.machello/history/.", "此操作将永久删除保存在 ~/.machello/history/ 下的所有实况照片与历史记录。")),
+                primaryButton: .destructive(Text(loc("Confirm", "确认清空"))) {
                     logger.clearAllRecords()
                     selectedRecordId = nil
                 },
-                secondaryButton: .cancel(Text("取消"))
+                secondaryButton: .cancel(Text(loc("Cancel", "取消")))
             )
         }
         .onAppear {
@@ -108,10 +117,10 @@ public struct AuditHistoryView: View {
                 .foregroundColor(.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("人脸解锁与通行抓拍历史")
+                Text(loc("Face ID Access & Snapshot History", "人脸解锁与通行抓拍历史"))
                     .font(.headline)
                     .fontWeight(.bold)
-                Text("实况留存与生物特征核验记录")
+                Text(loc("Biometric verification logs & snapshots", "实况留存与生物特征核验记录"))
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -119,16 +128,16 @@ public struct AuditHistoryView: View {
             Spacer()
 
             if !logger.records.isEmpty {
-                Picker("筛选", selection: $filterMode) {
+                Picker(loc("Filter", "筛选"), selection: $filterMode) {
                     ForEach(AuditFilter.allCases) { filter in
-                        Text(filter.rawValue).tag(filter)
+                        Text(filter.title).tag(filter)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 200)
+                .frame(width: 220)
             }
 
-            Button("完成") {
+            Button(loc("Done", "完成")) {
                 onDismiss()
             }
             .buttonStyle(.borderedProminent)
@@ -145,7 +154,7 @@ public struct AuditHistoryView: View {
                     Image(systemName: "line.3.horizontal.decrease.circle")
                         .font(.title2)
                         .foregroundColor(.secondary)
-                    Text("当前筛选下无记录")
+                    Text(loc("No records under current filter", "当前筛选下无记录"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -225,7 +234,7 @@ public struct AuditHistoryView: View {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.system(size: 40))
                         .foregroundColor(.secondary.opacity(0.5))
-                    Text("请在左侧选择要查看的通行记录")
+                    Text(loc("Select a record on the left to inspect", "请在左侧选择要查看的通行记录"))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -252,7 +261,7 @@ public struct AuditHistoryView: View {
                     Image(systemName: "photo")
                         .font(.largeTitle)
                         .foregroundColor(.white.opacity(0.3))
-                    Text("图像文件不存在或已被清除")
+                    Text(loc("Snapshot image not found or removed", "图像文件不存在或已被清除"))
                         .font(.caption)
                         .foregroundColor(.white.opacity(0.5))
                 }
@@ -267,16 +276,16 @@ public struct AuditHistoryView: View {
 
     private func securityMetricsCard(_ record: AuditRecord) -> some View {
         VStack(spacing: 10) {
-            metricRow(title: "通行事件", value: record.displayTitle, icon: record.displayIcon)
+            metricRow(title: loc("Event", "通行事件"), value: record.displayTitle, icon: record.displayIcon)
 
             // 相似度指示器
             VStack(spacing: 4) {
                 HStack {
-                    Label("人脸相似度", systemImage: "sparkles")
+                    Label(loc("Face Similarity", "人脸相似度"), systemImage: "sparkles")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
-                    Text(String(format: "%.1f%%  (安全阈值: 58.0%%)", record.score * 100))
+                    Text(String(format: "%.1f%%  (\(loc("Threshold", "安全阈值")): 58.0%%)", record.score * 100))
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(record.success ? .green : .orange)
@@ -306,14 +315,16 @@ public struct AuditHistoryView: View {
             Divider()
 
             metricRow(
-                title: "安全判定",
-                value: record.success ? "机主本人 • 验证通过 ✓" : "相似度未达标 • 拒绝通行",
+                title: loc("Security Decision", "安全判定"),
+                value: record.success
+                    ? loc("Owner Verified ✓", "机主本人 • 验证通过 ✓")
+                    : loc("Threshold Not Met • Access Denied", "相似度未达标 • 拒绝通行"),
                 icon: record.success ? "checkmark.shield.fill" : "xmark.shield.fill",
                 valueColor: record.success ? .green : .red
             )
 
             metricRow(
-                title: "抓拍时间",
+                title: loc("Captured At", "抓拍时间"),
                 value: formatDateLong(record.timestamp),
                 icon: "clock.fill"
             )
@@ -335,7 +346,7 @@ public struct AuditHistoryView: View {
                     NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
             }) {
-                Label("在访达中显示", systemImage: "folder")
+                Label(loc("Reveal in Finder", "在访达中显示"), systemImage: "folder")
             }
             .buttonStyle(.bordered)
             .font(.caption)
@@ -348,7 +359,7 @@ public struct AuditHistoryView: View {
                     selectedRecordId = filteredRecords.first?.id
                 }
             }) {
-                Label("删除此条记录", systemImage: "trash")
+                Label(loc("Delete Record", "删除此条记录"), systemImage: "trash")
             }
             .buttonStyle(.bordered)
             .font(.caption)
@@ -369,15 +380,18 @@ public struct AuditHistoryView: View {
             }
 
             VStack(spacing: 6) {
-                Text("暂无通行抓拍历史")
+                Text(loc("No Access History Yet", "暂无通行抓拍历史"))
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Text("当您进行锁屏 Face ID 解锁、感应亮屏、或终端中使用 sudo 提权时，\n系统会自动在此安全留存核验快照。")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
+                Text(loc(
+                    "When you unlock your Mac, wake the screen via presence, or run sudo in Terminal,\nverification snapshots will be securely saved here.",
+                    "当您进行锁屏 Face ID 解锁、感应亮屏、或终端中使用 sudo 提权时，\n系统会自动在此安全留存核验快照。"
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
             }
             Spacer()
         }
@@ -390,7 +404,7 @@ public struct AuditHistoryView: View {
             Button(action: {
                 logger.openHistoryFolder()
             }) {
-                Label("打开历史相册文件夹", systemImage: "folder.badge.gearshape")
+                Label(loc("Open History Folder", "打开历史相册文件夹"), systemImage: "folder.badge.gearshape")
             }
             .buttonStyle(.bordered)
             .font(.subheadline)
@@ -398,21 +412,20 @@ public struct AuditHistoryView: View {
             Spacer()
 
             if !logger.records.isEmpty {
-                Text("共 \(logger.records.count) 条记录")
+                Text(loc("\(logger.records.count) records", "共 \(logger.records.count) 条记录"))
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                Button("清空记录") {
+                Button(loc("Clear History", "清空记录")) {
                     showClearConfirm = true
                 }
                 .buttonStyle(.bordered)
                 .foregroundColor(.red)
-                .font(.subheadline)
             }
         }
     }
 
-    // MARK: - 辅助样式方法
+    // MARK: - 辅助组件
     private func metricRow(title: String, value: String, icon: String, valueColor: Color = .primary) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
@@ -431,26 +444,28 @@ public struct AuditHistoryView: View {
 
     private func eventColor(for reason: String) -> Color {
         switch reason {
-        case "lockscreen": return .blue
-        case "wake_display": return .teal
+        case "lockscreen": return .green
+        case "wake_display": return .blue
         case "admin_prompt": return .purple
         case "terminal_sudo": return .orange
-        case "diagnostic": return .green
+        case "diagnostic": return .cyan
         default: return .secondary
         }
     }
 
     private func formatTimestamp(_ date: Date) -> String {
-        let cal = Calendar.current
         let formatter = DateFormatter()
-        if cal.isDateInToday(date) {
-            formatter.dateFormat = "今天 HH:mm:ss"
-        } else if cal.isDateInYesterday(date) {
-            formatter.dateFormat = "昨天 HH:mm:ss"
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            formatter.dateFormat = "HH:mm:ss"
+            return "\(loc("Today", "今天")) \(formatter.string(from: date))"
+        } else if calendar.isDateInYesterday(date) {
+            formatter.dateFormat = "HH:mm:ss"
+            return "\(loc("Yesterday", "昨天")) \(formatter.string(from: date))"
         } else {
             formatter.dateFormat = "MM-dd HH:mm"
+            return formatter.string(from: date)
         }
-        return formatter.string(from: date)
     }
 
     private func formatDateLong(_ date: Date) -> String {

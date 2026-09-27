@@ -8,7 +8,7 @@ final class EnrollmentViewModel: ObservableObject, FaceEnrollmentDelegate {
     @Published var targetPose: TargetPose = .center
     @Published var completedPoses: Set<TargetPose> = []
     @Published var progress: Double = 0.0
-    @Published var instruction: String = "请正视摄像头，保持平视"
+    @Published var instruction: String = loc("Look directly at camera, keep eyes level", "请正视摄像头，保持平视")
     @Published var isMatchingCurrentPose: Bool = false
     @Published var isPoseFrozen: Bool = false
     @Published var showAlternativePrompt: Bool = false
@@ -114,6 +114,7 @@ final class EnrollmentViewModel: ObservableObject, FaceEnrollmentDelegate {
 
 struct FaceEnrollmentView: View {
     @StateObject private var viewModel = EnrollmentViewModel()
+    @ObservedObject private var lang = LanguageManager.shared
     var onDismiss: (() -> Void)?
 
     var body: some View {
@@ -153,7 +154,7 @@ struct FaceEnrollmentView: View {
                     Circle()
                         .fill(Color.accentColor)
                         .frame(width: 6, height: 6)
-                    Text(viewModel.stage == .regular ? "步骤 1/2 • 日常外观" : "步骤 2/2 • 替用外观")
+                    Text(viewModel.stage.title)
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
@@ -213,7 +214,7 @@ struct FaceEnrollmentView: View {
                             VStack(spacing: 10) {
                                 ProgressView()
                                     .controlSize(.small)
-                                Text("正在开启红外夜视镜头...")
+                                Text(loc("Starting IR night-vision camera...", "正在开启红外夜视镜头..."))
                                     .font(.caption2)
                                     .foregroundColor(.white.opacity(0.6))
                             }
@@ -237,7 +238,7 @@ struct FaceEnrollmentView: View {
                             .foregroundColor(.green)
                             .shadow(color: Color.black.opacity(0.5), radius: 8, x: 0, y: 4)
 
-                        Text("角度已捕获")
+                        Text(loc("Pose Captured", "角度已捕获"))
                             .font(.subheadline)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
@@ -262,12 +263,16 @@ struct FaceEnrollmentView: View {
                     .animation(.easeInOut(duration: 0.2), value: viewModel.isMatchingCurrentPose)
 
                 ZStack {
-                    Text(viewModel.isPoseFrozen ? "角度捕获成功，定格中..." : "保持当前姿态，正在录入特征...")
-                        .font(.subheadline)
-                        .foregroundColor(.green)
-                        .opacity((viewModel.isMatchingCurrentPose || viewModel.isPoseFrozen) ? 1.0 : 0.0)
+                    Text(
+                        viewModel.isPoseFrozen
+                            ? loc("Pose captured! Stabilizing...", "角度捕获成功，定格中...")
+                            : loc("Hold still, recording biometric features...", "保持当前姿态，正在录入特征...")
+                    )
+                    .font(.subheadline)
+                    .foregroundColor(.green)
+                    .opacity((viewModel.isMatchingCurrentPose || viewModel.isPoseFrozen) ? 1.0 : 0.0)
 
-                    Text("缓慢转动面部，对齐指示角度")
+                    Text(loc("Slowly turn your face to align with indicator", "缓慢转动面部，对齐指示角度"))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .opacity((!viewModel.isMatchingCurrentPose && !viewModel.isPoseFrozen) ? 1.0 : 0.0)
@@ -314,21 +319,24 @@ struct FaceEnrollmentView: View {
             }
 
             VStack(spacing: 8) {
-                Text("第一阶段录入完成")
+                Text(loc("First Stage Complete", "第一阶段录入完成"))
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
 
-                Text("建议设置脱镜 / 替用外观")
+                Text(loc("Set Up Glasses-Off / Alternative Appearance", "建议设置脱镜 / 替用外观"))
                     .font(.title2)
                     .fontWeight(.bold)
             }
 
-            Text("如果您平时戴眼镜，请摘下眼镜再录入一次。\n这样无论您是否佩戴眼镜，Mac 都能快速识别并秒级解锁。")
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 40)
+            Text(loc(
+                "If you wear glasses, take them off and scan once more.\nThis allows Mac to recognize you instantly whether wearing glasses or not.",
+                "如果您平时戴眼镜，请摘下眼镜再录入一次。\n这样无论您是否佩戴眼镜，Mac 都能快速识别并秒级解锁。"
+            ))
+            .font(.body)
+            .multilineTextAlignment(.center)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 40)
 
             Spacer()
 
@@ -336,7 +344,7 @@ struct FaceEnrollmentView: View {
                 Button(action: {
                     viewModel.startAlternative()
                 }) {
-                    Text("摘下眼镜并开始录入")
+                    Text(loc("Remove Glasses & Start", "摘下眼镜并开始录入"))
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -346,7 +354,7 @@ struct FaceEnrollmentView: View {
                 Button(action: {
                     viewModel.skipAlternative()
                 }) {
-                    Text("跳过此步 (平时不戴眼镜)")
+                    Text(loc("Skip (I don't wear glasses)", "跳过此步 (平时不戴眼镜)"))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -373,27 +381,33 @@ struct FaceEnrollmentView: View {
             }
 
             VStack(spacing: 8) {
-                Text("面容 ID 已设置完成")
+                Text(loc("Face ID is Ready", "面容 ID 已设置完成"))
                     .font(.title)
                     .fontWeight(.bold)
 
-                Text("已提取并存储 \(viewModel.totalSamplesCount) 组红外 3D 特征向量")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                Text(loc(
+                    "Extracted and stored \(viewModel.totalSamplesCount) IR 3D feature vectors",
+                    "已提取并存储 \(viewModel.totalSamplesCount) 组红外 3D 特征向量"
+                ))
+                .font(.subheadline)
+                .foregroundColor(.secondary)
             }
 
-            Text("现在您可以使用 Dell CN-0592WK 摄像头\n进行人脸感应亮屏与近红外活体全场景解锁。")
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 40)
+            Text(loc(
+                "You can now use Dell CN-0592WK for presence wake\nand near-infrared biometric face unlock.",
+                "现在您可以使用 Dell CN-0592WK 摄像头\n进行人脸感应亮屏与近红外活体全场景解锁。"
+            ))
+            .font(.body)
+            .multilineTextAlignment(.center)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 40)
 
             Spacer()
 
             Button(action: {
                 onDismiss?()
             }) {
-                Text("完成")
+                Text(loc("Done", "完成"))
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)

@@ -4,17 +4,17 @@ set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR"
 
-echo "🔨 正在编译 MacHelloAuth (Swift 原生人脸认证核心)..."
+echo "🔨 Building MacHelloAuth (Swift Native Face Auth Core)..."
 swift build -c release --product MacHelloAuth
 
 AUTH_BIN="$DIR/.build/release/MacHelloAuth"
 
-echo "🔨 正在编译 pam_machello.so (PAM 动态链接库)..."
+echo "🔨 Compiling pam_machello.so (PAM shared library)..."
 mkdir -p "$DIR/.build/release"
 clang -shared -fPIC -lpam -O2 -Wall -Wextra -Werror \
     -o "$DIR/.build/release/pam_machello.so" \
     Sources/MacHelloPAM/pam_machello.c
 
-echo "✅ 编译完成！"
-echo "  - 认证二进制: $AUTH_BIN"
-echo "  - PAM 动态库: $DIR/.build/release/pam_machello.so"
+echo "✅ Compilation complete!"
+echo "  - Auth binary: $AUTH_BIN"
+echo "  - PAM library: $DIR/.build/release/pam_machello.so"

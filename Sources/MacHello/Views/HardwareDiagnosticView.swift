@@ -239,7 +239,7 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
 
 public final class DiagnosticViewModel: ObservableObject {
     @Published public var isConnected: Bool = false
-    @Published public var cameraName: String = "正在检测..."
+    @Published public var cameraName: String = loc("Detecting...", "正在检测...")
     @Published public var hardwareConfirmed: Bool = false
 
     @Published public var test1State: TestState = .idle
@@ -262,7 +262,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
     @Published public var isTesting: Bool = false
     @Published public var allPassed: Bool = false
-    @Published public var statusMessage: String = "请确认硬件后点击下方「开始自检」"
+    @Published public var statusMessage: String = loc("Confirm hardware above, then click 'Run Hardware Test' below", "请确认硬件后点击下方「开始自检」")
 
     public init() {
         self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
@@ -285,10 +285,10 @@ public final class DiagnosticViewModel: ObservableObject {
             if let rgbData = try? Data(contentsOf: fileManager.rgbImagePath) {
                 let faces = FaceFeatureExtractor.shared.extract(from: rgbData)
                 if !faces.isEmpty {
-                    self.rgbBadgeText = "👤 检测到人脸"
+                    self.rgbBadgeText = loc("👤 Face Detected", "👤 检测到人脸")
                     self.rgbBadgeColor = .green
                 } else {
-                    self.rgbBadgeText = "⚪ 未检测到人脸"
+                    self.rgbBadgeText = loc("⚪ No Face Detected", "⚪ 未检测到人脸")
                     self.rgbBadgeColor = .secondary
                 }
             }
@@ -303,18 +303,18 @@ public final class DiagnosticViewModel: ObservableObject {
                         let match = FaceDatabase.shared.match(embedding: bestFace.embedding)
                         let pct = Int(round(max(0.0, match.highestScore) * 100))
                         if match.matched {
-                            self.irBadgeText = "🟢 机主已识别 (\(pct)%)"
+                            self.irBadgeText = loc("🟢 Owner Recognized (\(pct)%)", "🟢 机主已识别 (\(pct)%)")
                             self.irBadgeColor = .green
                         } else {
-                            self.irBadgeText = "🟠 未匹配机主 (\(pct)%)"
+                            self.irBadgeText = loc("🟠 Match Below Threshold (\(pct)%)", "🟠 未匹配机主 (\(pct)%)")
                             self.irBadgeColor = .orange
                         }
                     } else {
-                        self.irBadgeText = "👤 检测到人脸 (未录入)"
+                        self.irBadgeText = loc("👤 Face Detected (Not Enrolled)", "👤 检测到人脸 (未录入)")
                         self.irBadgeColor = .blue
                     }
                 } else {
-                    self.irBadgeText = "⚪ 未检测到人脸"
+                    self.irBadgeText = loc("⚪ No Face Detected", "⚪ 未检测到人脸")
                     self.irBadgeColor = .secondary
                 }
             }
@@ -327,13 +327,13 @@ public final class DiagnosticViewModel: ObservableObject {
             client.measureLatency()
             self.isConnected = client.isConnected
             if !client.isServerReachable {
-                self.cameraName = "未连接到 Linux 服务端 (\(client.serverURLString))"
+                self.cameraName = loc("Disconnected from Linux server (\(client.serverURLString))", "未连接到 Linux 服务端 (\(client.serverURLString))")
                 self.hardwareConfirmed = false
             } else if !client.isHardwareConnected {
-                self.cameraName = "Linux 在线，但未检测到摄像头插入"
+                self.cameraName = loc("Linux online, but camera not detected", "Linux 在线，但未检测到摄像头插入")
                 self.hardwareConfirmed = false
             } else {
-                self.cameraName = "Dell CN-0592WK (局域网 Linux 服务端直连)"
+                self.cameraName = loc("Dell CN-0592WK (Linux Gateway Connected)", "Dell CN-0592WK (局域网 Linux 服务端直连)")
                 self.hardwareConfirmed = true
             }
         } else if let dev = AVCaptureDevice.default(for: .video) {
@@ -344,7 +344,7 @@ public final class DiagnosticViewModel: ObservableObject {
             }
         } else {
             self.isConnected = false
-            self.cameraName = "未找到可用视频设备"
+            self.cameraName = loc("No compatible video device found", "未找到可用视频设备")
             self.hardwareConfirmed = false
         }
     }
@@ -365,7 +365,7 @@ public final class DiagnosticViewModel: ObservableObject {
         // 彻底清除历史抓拍，杜绝旧照片冒充实时流
         try? FileManager.default.removeItem(at: DiagnosticFileManager.shared.rgbImagePath)
         try? FileManager.default.removeItem(at: DiagnosticFileManager.shared.irImagePath)
-        statusMessage = "正在连接可见光镜头并拉取实时画面..."
+        statusMessage = loc("Connecting to RGB camera and pulling live frames...", "正在连接可见光镜头并拉取实时画面...")
 
         // 诊断测试独占摄像头，避免后台自动睡眠/人脸检测冲突抢占
         PresenceAutoDisplayService.shared.isDiagnosticRunning = true
@@ -410,9 +410,9 @@ public final class DiagnosticViewModel: ObservableObject {
                 if rgbHelper.frameCount == 0 {
                     DiagnosticFileManager.shared.log("Step 1: RGB 测试失败：未能从视频流接收到画面 (捕获 0 帧)")
                     DispatchQueue.main.async {
-                        self.test1State = .failed("未接收到画面 (捕获 0 帧)")
+                        self.test1State = .failed(loc("0 frames captured", "未接收到画面 (捕获 0 帧)"))
                         self.isTesting = false
-                        self.statusMessage = "可见光测试失败：未捕获到视频帧，请检查相机供流"
+                        self.statusMessage = loc("RGB test failed: 0 frames captured, check camera connection", "可见光测试失败：未捕获到视频帧，请检查相机供流")
                     }
                     return
                 }
@@ -427,22 +427,22 @@ public final class DiagnosticViewModel: ObservableObject {
                         self.rgbImage = img
                     }
                     if rgbHasFace {
-                        self.rgbBadgeText = "👤 检测到人脸"
+                        self.rgbBadgeText = loc("👤 Face Detected", "👤 检测到人脸")
                         self.rgbBadgeColor = .green
                     } else {
-                        self.rgbBadgeText = "⚪ 未检测到人脸"
+                        self.rgbBadgeText = loc("⚪ No Face Detected", "⚪ 未检测到人脸")
                         self.rgbBadgeColor = .secondary
                     }
                     self.test1State = .passed
                     self.test2State = .running
-                    self.statusMessage = "正在验证 UVC 扩展单元协议握手..."
+                    self.statusMessage = loc("Verifying UVC Extension Unit protocol handshake...", "正在验证 UVC 扩展单元协议握手...")
                 }
             } catch {
                 DiagnosticFileManager.shared.log("Step 1: RGB 测试失败: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.test1State = .failed(error.localizedDescription)
                     self.isTesting = false
-                    self.statusMessage = "可见光测试失败"
+                    self.statusMessage = loc("RGB test failed", "可见光测试失败")
                 }
                 return
             }
@@ -454,9 +454,9 @@ public final class DiagnosticViewModel: ObservableObject {
                 guard LinuxPresenceClient.shared.isConnected else {
                     DiagnosticFileManager.shared.log("Step 2: 局域网 Linux 服务未就绪或未插摄像头")
                     DispatchQueue.main.async {
-                        self.test2State = .failed("局域网硬件未就绪")
+                        self.test2State = .failed(loc("Linux hardware not ready", "局域网硬件未就绪"))
                         self.isTesting = false
-                        self.statusMessage = "硬件验证失败：局域网服务端未就绪或未插摄像头"
+                        self.statusMessage = loc("Hardware verification failed: Linux server not ready or camera disconnected", "硬件验证失败：局域网服务端未就绪或未插摄像头")
                     }
                     return
                 }
@@ -464,9 +464,9 @@ public final class DiagnosticViewModel: ObservableObject {
                 guard irController.isConnected else {
                     DiagnosticFileManager.shared.log("Step 2: 未找到 USB 0bda:5767 接口")
                     DispatchQueue.main.async {
-                        self.test2State = .failed("未找到 USB 0bda:5767 接口")
+                        self.test2State = .failed(loc("USB 0bda:5767 not found", "未找到 USB 0bda:5767 接口"))
                         self.isTesting = false
-                        self.statusMessage = "未检测到本机 USB 0bda:5767 硬件"
+                        self.statusMessage = loc("USB 0bda:5767 hardware not detected", "未检测到本机 USB 0bda:5767 硬件")
                     }
                     return
                 }
@@ -475,7 +475,7 @@ public final class DiagnosticViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self.test2State = .passed
                 self.test3State = .running
-                self.statusMessage = "正在打亮 850nm 红外发射管..."
+                self.statusMessage = loc("Turning on 850nm IR emitter LED...", "正在打亮 850nm 红外发射管...")
             }
 
             // Step 3: 触发 IR 模式
@@ -496,9 +496,9 @@ public final class DiagnosticViewModel: ObservableObject {
             guard irSuccess else {
                 DiagnosticFileManager.shared.log("Step 3: UVC 寄存器写入失败 / 远程 IR 切换无响应")
                 DispatchQueue.main.async {
-                    self.test3State = .failed("红外切换指令失败")
+                    self.test3State = .failed(loc("IR switch command failed", "红外切换指令失败"))
                     self.isTesting = false
-                    self.statusMessage = "红外模式切换失败，请检查摄像头硬件"
+                    self.statusMessage = loc("IR mode switch failed, please check camera hardware", "红外模式切换失败，请检查摄像头硬件")
                 }
                 return
             }
@@ -506,7 +506,7 @@ public final class DiagnosticViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self.test3State = .passed
                 self.test4State = .running
-                self.statusMessage = "正在启动红外夜视镜头 (自动曝光增益校准中)..."
+                self.statusMessage = loc("Starting IR night-vision camera (auto-exposure gain calibrating)...", "正在启动红外夜视镜头 (自动曝光增益校准中)...")
             }
 
             // Step 4: 捕获 IR 视频流 (切换为红外灰度采集)
@@ -532,9 +532,9 @@ public final class DiagnosticViewModel: ObservableObject {
                     irController.resetToRGB()
                     DiagnosticFileManager.shared.log("Step 4: 红外测试失败：未能捕获到红外视频帧 (捕获 0 帧)")
                     DispatchQueue.main.async {
-                        self.test4State = .failed("未捕获到红外帧 (0 帧)")
+                        self.test4State = .failed(loc("0 IR frames captured", "未捕获到红外帧 (0 帧)"))
                         self.isTesting = false
-                        self.statusMessage = "红外测试失败：未接收到夜视画面，请检查镜头与补光灯"
+                        self.statusMessage = loc("IR test failed: No night-vision frames received", "红外测试失败：未接收到夜视画面，请检查镜头与补光灯")
                     }
                     return
                 }
@@ -550,7 +550,7 @@ public final class DiagnosticViewModel: ObservableObject {
                     }
                     self.test4State = .passed
                     self.test5State = .running
-                    self.statusMessage = "正在通过神经网络分析人脸特征并执行比对打分..."
+                    self.statusMessage = loc("Analyzing facial features via Apple Neural Engine...", "正在通过神经网络分析人脸特征并执行比对打分...")
                 }
 
                 // Step 5: 人脸识别特征提取与打分比对
@@ -571,17 +571,17 @@ public final class DiagnosticViewModel: ObservableObject {
                         DiagnosticFileManager.shared.log("Step 5: 机主面容已录入，最高相似度: \(match.highestScore) (\(pct)%), 判定命中: \(match.matched)")
 
                         if match.matched {
-                            badgeText = "🟢 机主已识别 (\(pct)%)"
+                            badgeText = loc("🟢 Owner Recognized (\(pct)%)", "🟢 机主已识别 (\(pct)%)")
                             badgeColor = .green
-                            step5Text = "机主本人已命中 (匹配度: \(pct)%)"
+                            step5Text = loc("Owner Verified (Match: \(pct)%)", "机主本人已命中 (匹配度: \(pct)%)")
                             step5State = .passed
-                            finalMessage = "🎉 双目镜头与机主识别全链路通过！匹配度 \(pct)%，红外解锁已就绪。"
+                            finalMessage = loc("🎉 Full hardware & biometric pipeline verified! Match \(pct)%, ready for IR face unlock.", "🎉 双目镜头与机主识别全链路通过！匹配度 \(pct)%，红外解锁已就绪。")
                         } else {
-                            badgeText = "🟠 未匹配机主 (\(pct)%)"
+                            badgeText = loc("🟠 Match Below Threshold (\(pct)%)", "🟠 未匹配机主 (\(pct)%)")
                             badgeColor = .orange
-                            step5Text = "识别到人脸，相似度较弱 (\(pct)%)"
-                            step5State = .warning("相似度较弱 (\(pct)%)")
-                            finalMessage = "⚠️ 硬件正常且识别到人脸，但与机主相似度较低 (\(pct)%)，建议正视镜头。"
+                            step5Text = loc("Face detected, low similarity (\(pct)%)", "识别到人脸，相似度较弱 (\(pct)%)")
+                            step5State = .warning(loc("Low similarity (\(pct)%)", "相似度较弱 (\(pct)%)"))
+                            finalMessage = loc("⚠️ Hardware functional, face detected, but similarity is low (\(pct)%). Try looking directly at camera.", "⚠️ 硬件正常且识别到人脸，但与机主相似度较低 (\(pct)%)，建议正视镜头。")
                         }
 
                         // 归档自检抓拍到通行审计历史中心
@@ -595,26 +595,26 @@ public final class DiagnosticViewModel: ObservableObject {
                         }
                     } else {
                         DiagnosticFileManager.shared.log("Step 5: 未录入面容，但红外镜头已成功识别到人脸")
-                        badgeText = "👤 检测到人脸 (未录入)"
+                        badgeText = loc("👤 Face Detected (Not Enrolled)", "👤 检测到人脸 (未录入)")
                         badgeColor = .blue
-                        step5Text = "已检测到人脸 (面容未录入)"
+                        step5Text = loc("Face detected (No profile enrolled)", "已检测到人脸 (面容未录入)")
                         step5State = .passed
-                        finalMessage = "🎉 硬件双目自检通过，已识别人脸！建议点击下方「立即录入面容 ID」。"
+                        finalMessage = loc("🎉 Hardware diagnostic passed, face detected! Click 'Set Up Face ID Now' below.", "🎉 硬件双目自检通过，已识别人脸！建议点击下方「立即录入面容 ID」。")
                     }
                 } else {
                     DiagnosticFileManager.shared.log("Step 5: 红外镜头未检测到人脸")
                     if rgbHasFace {
-                        badgeText = "⚪ 红外未识别人脸"
+                        badgeText = loc("⚪ Not Detected in IR", "⚪ 红外未识别人脸")
                         badgeColor = .secondary
-                        step5Text = "仅可见光检测到人脸 (红外未捕获)"
-                        step5State = .warning("红外未捕获面部")
-                        finalMessage = "⚠️ 硬件正常，可见光检测到人，但红外未捕获清晰面部，请正对摄像头重试。"
+                        step5Text = loc("Face detected in RGB only", "仅可见光检测到人脸 (红外未捕获)")
+                        step5State = .warning(loc("IR missed face", "红外未捕获面部"))
+                        finalMessage = loc("⚠️ Hardware ok, face detected in RGB, but IR missed clear face. Face camera directly and retry.", "⚠️ 硬件正常，可见光检测到人，但红外未捕获清晰面部，请正对摄像头重试。")
                     } else {
-                        badgeText = "⚪ 未检测到人脸"
+                        badgeText = loc("⚪ No Face Detected", "⚪ 未检测到人脸")
                         badgeColor = .secondary
-                        step5Text = "未检测到人脸 (请正视镜头)"
-                        step5State = .warning("未检测到人脸")
-                        finalMessage = "⚠️ 硬件双目自检通过，但未检测到人脸，请确保摄像头无遮挡并正对镜头。"
+                        step5Text = loc("No face detected (face camera directly)", "未检测到人脸 (请正视镜头)")
+                        step5State = .warning(loc("No face detected", "未检测到人脸"))
+                        finalMessage = loc("⚠️ Hardware diagnostic passed, but no face detected. Ensure camera is unobstructed.", "⚠️ 硬件双目自检通过，但未检测到人脸，请确保摄像头无遮挡并正对镜头。")
                     }
                 }
 
@@ -640,7 +640,7 @@ public final class DiagnosticViewModel: ObservableObject {
                     self.test4State = .failed(error.localizedDescription)
                     self.test5State = .idle
                     self.isTesting = false
-                    self.statusMessage = "红外捕获失败"
+                    self.statusMessage = loc("IR capture failed", "红外捕获失败")
                 }
             }
         }
@@ -649,6 +649,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
 public struct HardwareDiagnosticView: View {
     @StateObject private var vm = DiagnosticViewModel()
+    @ObservedObject private var lang = LanguageManager.shared
 
     var onDismiss: () -> Void
     var onStartEnrollment: () -> Void
@@ -713,10 +714,10 @@ public struct HardwareDiagnosticView: View {
                 .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("硬件自检与设备确认")
+                Text(loc("Hardware Diagnostics & Setup", "硬件自检与设备确认"))
                     .font(.title2)
                     .fontWeight(.bold)
-                Text("Dell CN-0592WK 双目红外识别模组链路校准")
+                Text(loc("Dell CN-0592WK Dual-Sensor IR Module Calibration", "Dell CN-0592WK 双目红外识别模组链路校准"))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -728,7 +729,7 @@ public struct HardwareDiagnosticView: View {
                 Circle()
                     .fill(vm.isConnected ? Color.green : Color.red)
                     .frame(width: 8, height: 8)
-                Text(vm.isConnected ? (MacHelloService.shared.isNetworkModeEnabled ? "局域网硬件已就绪" : "0bda:5767 已连接") : "未检测到硬件")
+                Text(vm.isConnected ? (MacHelloService.shared.isNetworkModeEnabled ? loc("Linux Hardware Ready", "局域网硬件已就绪") : loc("0bda:5767 Connected", "0bda:5767 已连接")) : loc("Hardware Disconnected", "未检测到硬件"))
                     .font(.caption)
                     .fontWeight(.medium)
                     .foregroundColor(vm.isConnected ? .green : .red)
@@ -748,23 +749,23 @@ public struct HardwareDiagnosticView: View {
     private var hardwareSpecificationCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("硬件规格与识别", systemImage: "cpu.fill")
+                Label(loc("Hardware Specs & Identification", "硬件规格与识别"), systemImage: "cpu.fill")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Spacer()
             }
 
             VStack(spacing: 8) {
-                specRow(title: "目标硬件型号", value: "Dell CN-0592WK (Realtek 0bda:5767)", icon: "target")
-                specRow(title: "当前系统设备", value: vm.cameraName, icon: "video.fill")
-                specRow(title: "红外传感模组", value: "850nm 独立发射管 + 640x480 YUY2", icon: "moon.stars.fill")
+                specRow(title: loc("Target Hardware", "目标硬件型号"), value: "Dell CN-0592WK (Realtek 0bda:5767)", icon: "target")
+                specRow(title: loc("Active System Device", "当前系统设备"), value: vm.cameraName, icon: "video.fill")
+                specRow(title: loc("IR Sensor Module", "红外传感模组"), value: loc("850nm Emitter + 640x480 YUY2", "850nm 独立发射管 + 640x480 YUY2"), icon: "moon.stars.fill")
             }
             .padding(12)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             Toggle(isOn: $vm.hardwareConfirmed) {
-                Text("确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组")
+                Text(loc("Confirm connected device is **Dell CN-0592WK** (0bda:5767) dual-sensor module", "确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组"))
                     .font(.subheadline)
             }
             .toggleStyle(.checkbox)
@@ -774,9 +775,9 @@ public struct HardwareDiagnosticView: View {
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("摄像头倒置安装模式 (旋转 180°)")
+                    Text(loc("Inverted Mount Mode (Rotate 180°)", "摄像头倒置安装模式 (旋转 180°)"))
                         .font(.subheadline)
-                    Text("画面旋转 180°，适合将模组倒贴在显示器下方使用")
+                    Text(loc("Rotates feed 180°, ideal for mounting under your monitor", "画面旋转 180°，适合将模组倒贴在显示器下方使用"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -805,7 +806,7 @@ public struct HardwareDiagnosticView: View {
     private var dualCameraSnapshotCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("双目镜头实拍效果验证", systemImage: "camera.fill")
+                Label(loc("Dual-Sensor Live Verification", "双目镜头实拍效果验证"), systemImage: "camera.fill")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Spacer()
@@ -814,24 +815,24 @@ public struct HardwareDiagnosticView: View {
             HStack(spacing: 14) {
                 // 左侧：RGB 可见光镜头
                 cameraFeedView(
-                    title: "可见光镜头 (RGB 720P)",
+                    title: loc("Visible Light Camera (RGB 720P)", "可见光镜头 (RGB 720P)"),
                     systemIcon: "camera.fill",
                     image: vm.rgbImage,
                     badgeText: vm.rgbBadgeText,
                     badgeColor: vm.rgbBadgeColor,
                     isRunning: vm.test1State == .running,
-                    runningText: "正在捕获可见光画面..."
+                    runningText: loc("Capturing visible light...", "正在捕获可见光画面...")
                 )
 
                 // 右侧：IR 红外夜视镜头
                 cameraFeedView(
-                    title: "红外夜视镜头 (IR 640x480)",
+                    title: loc("IR Night-Vision Camera (IR 640x480)", "红外夜视镜头 (IR 640x480)"),
                     systemIcon: "moon.stars.fill",
                     image: vm.irImage,
                     badgeText: vm.irBadgeText,
                     badgeColor: vm.irBadgeColor,
                     isRunning: vm.test4State == .running,
-                    runningText: "850nm 补光抓拍中..."
+                    runningText: loc("850nm snapshot...", "850nm 补光抓拍中...")
                 )
             }
         }
@@ -883,7 +884,7 @@ public struct HardwareDiagnosticView: View {
                             Image(systemName: systemIcon)
                                 .font(.system(size: 28))
                                 .foregroundColor(.white.opacity(0.35))
-                            Text("点击自检后抓拍")
+                            Text(loc("Click self-test to capture", "点击自检后抓拍"))
                                 .font(.caption2)
                                 .foregroundColor(.white.opacity(0.5))
                         }
@@ -925,22 +926,22 @@ public struct HardwareDiagnosticView: View {
     private var diagnosticPipelineCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("硬件全链路诊断步骤", systemImage: "checklist")
+                Label(loc("Hardware Diagnostic Pipeline", "硬件全链路诊断步骤"), systemImage: "checklist")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Spacer()
             }
 
             VStack(spacing: 6) {
-                testItemRow(index: 1, title: "可见光镜头 (RGB 720P) 视频流与画面采样", state: vm.test1State)
+                testItemRow(index: 1, title: loc("1. Visible light (RGB 720P) stream and frame sampling", "可见光镜头 (RGB 720P) 视频流与画面采样"), state: vm.test1State)
                 Divider()
-                testItemRow(index: 2, title: "Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: vm.test2State)
+                testItemRow(index: 2, title: loc("2. Realtek UVC Extension Unit (Unit 4) 5-step handshake", "Realtek UVC 扩展单元 (Unit 4) 5步状态机握手"), state: vm.test2State)
                 Divider()
-                testItemRow(index: 3, title: "850nm 近红外发射管点亮与夜视模式切换", state: vm.test3State)
+                testItemRow(index: 3, title: loc("3. 850nm NIR emitter trigger and night-vision mode switch", "850nm 近红外发射管点亮与夜视模式切换"), state: vm.test3State)
                 Divider()
-                testItemRow(index: 4, title: "近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: vm.test4State)
+                testItemRow(index: 4, title: loc("4. Near-infrared camera (640x480 YUY2) frame capture", "近红外物理镜头 (640x480 YUY2) 数据帧抓取"), state: vm.test4State)
                 Divider()
-                testItemRow(index: 5, title: "人脸识别特征提取与面容比对打分", state: vm.test5State, customPassedText: vm.test5Detail)
+                testItemRow(index: 5, title: loc("5. Biometric facial feature extraction and cosine scoring", "人脸识别特征提取与面容比对打分"), state: vm.test5State, customPassedText: vm.test5Detail)
             }
             .padding(12)
             .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
@@ -996,7 +997,7 @@ public struct HardwareDiagnosticView: View {
                     } else {
                         Image(systemName: "play.fill")
                     }
-                    Text(vm.isTesting ? "正在自检..." : "开始硬件自检")
+                    Text(vm.isTesting ? loc("Testing...", "正在自检...") : loc("Run Hardware Test", "开始硬件自检"))
                 }
                 .frame(minWidth: 100)
             }
@@ -1007,14 +1008,14 @@ public struct HardwareDiagnosticView: View {
             Button(action: {
                 DiagnosticFileManager.shared.openFolder()
             }) {
-                Label("日志与截图", systemImage: "folder")
+                Label(loc("Logs & Snaps", "日志与截图"), systemImage: "folder")
             }
             .buttonStyle(.bordered)
 
             Button(action: {
                 DiagnosticFileManager.shared.openIRFramesFolder()
             }) {
-                Label("红外相册", systemImage: "photo.stack")
+                Label(loc("IR Album", "红外相册"), systemImage: "photo.stack")
             }
             .buttonStyle(.bordered)
 
@@ -1026,7 +1027,7 @@ public struct HardwareDiagnosticView: View {
                     onStartEnrollment()
                 }) {
                     HStack(spacing: 4) {
-                        Text(FaceDatabase.shared.isEnrolled ? "重新录入面容 ID" : "立即录入面容 ID")
+                        Text(FaceDatabase.shared.isEnrolled ? loc("Re-enroll Face ID", "重新录入面容 ID") : loc("Set Up Face ID Now", "立即录入面容 ID"))
                         Image(systemName: "arrow.right")
                     }
                 }
@@ -1034,7 +1035,7 @@ public struct HardwareDiagnosticView: View {
                 .tint(.green)
             }
 
-            Button(vm.allPassed ? "完成" : "关闭") {
+            Button(vm.allPassed ? loc("Done", "完成") : loc("Close", "关闭")) {
                 if vm.allPassed && vm.hardwareConfirmed {
                     UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
                 }
@@ -1083,16 +1084,16 @@ public struct HardwareDiagnosticView: View {
 
             switch state {
             case .idle:
-                Text("等待开始")
+                Text(loc("Pending", "等待开始"))
                     .font(.caption2)
                     .foregroundColor(.secondary)
             case .running:
-                Text("正在测试...")
+                Text(loc("Testing...", "正在测试..."))
                     .font(.caption2)
                     .fontWeight(.medium)
                     .foregroundColor(.accentColor)
             case .passed:
-                Text(customPassedText ?? "通过 ✓")
+                Text(customPassedText ?? loc("Passed ✓", "通过 ✓"))
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.green)
@@ -1102,7 +1103,7 @@ public struct HardwareDiagnosticView: View {
                     .fontWeight(.semibold)
                     .foregroundColor(.orange)
             case .failed(let err):
-                Text("失败: \(err)")
+                Text("\(loc("Failed", "失败")): \(err)")
                     .font(.caption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.red)

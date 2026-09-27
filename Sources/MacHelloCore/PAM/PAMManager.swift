@@ -39,15 +39,15 @@ public final class PAMManager {
         #!/bin/bash
         clear
         echo "======================================================"
-        echo "  🍏 MacHello 终端 Sudo 刷脸提权一键配置"
+        echo "  🍏 MacHello Sudo Face ID Setup"
         echo "======================================================"
         echo ""
-        echo "👉 请输入您的 Mac 登录密码以完成系统 PAM 授权配置："
+        echo "👉 Enter your Mac password to configure PAM:"
         echo ""
         sudo "\(scriptPath)"
         echo ""
         echo "======================================================"
-        echo "🎉 全部配置已完成！按任意键关闭此窗口..."
+        echo "🎉 Configuration complete! Press any key to exit..."
         echo "======================================================"
         read -n 1 -s
         exit 0
@@ -91,15 +91,15 @@ public final class PAMManager {
         #!/bin/bash
         clear
         echo "======================================================"
-        echo "  🧹 MacHello 终端 Sudo 刷脸提权卸载还原"
+        echo "  🧹 MacHello Sudo Face ID Uninstall"
         echo "======================================================"
         echo ""
-        echo "👉 请输入您的 Mac 登录密码以安全还原系统 PAM 配置："
+        echo "👉 Enter your Mac password to restore PAM:"
         echo ""
         sudo "\(scriptPath)"
         echo ""
         echo "======================================================"
-        echo "✅ 卸载已完成！按任意键关闭此窗口..."
+        echo "✅ Uninstall complete! Press any key to exit..."
         echo "======================================================"
         read -n 1 -s
         exit 0

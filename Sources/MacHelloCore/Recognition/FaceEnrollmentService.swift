@@ -5,22 +5,40 @@ import CoreImage
 import CIOKitHelper
 
 public enum EnrollmentStage: String {
-    case regular = "日常/戴镜外观"
-    case alternative = "脱镜/替用外观"
+    case regular = "regular"
+    case alternative = "alternative"
+
+    public var title: String {
+        switch self {
+        case .regular:
+            return loc("Step 1/2 • Default Appearance", "步骤 1/2 • 日常外观")
+        case .alternative:
+            return loc("Step 2/2 • Alternative Appearance", "步骤 2/2 • 替用外观")
+        }
+    }
 }
 
 public enum TargetPose: String, CaseIterable {
-    case center = "正视镜头"
-    case turnLeft = "向左微转头部"
-    case turnRight = "向右微转头部"
-    case tiltUp = "微微抬头"
+    case center = "center"
+    case turnLeft = "turnLeft"
+    case turnRight = "turnRight"
+    case tiltUp = "tiltUp"
+
+    public var title: String {
+        switch self {
+        case .center: return loc("Center", "正视镜头")
+        case .turnLeft: return loc("Turn Left", "向左微转头部")
+        case .turnRight: return loc("Turn Right", "向右微转头部")
+        case .tiltUp: return loc("Tilt Up", "微微抬头")
+        }
+    }
 
     public var instruction: String {
         switch self {
-        case .center: return "👀 请正视摄像头，保持平视"
-        case .turnLeft: return "👈 请将头部微微向左转动 (约 15°)"
-        case .turnRight: return "👉 请将头部微微向右转动 (约 15°)"
-        case .tiltUp: return "👆 请将头部微微向上抬起"
+        case .center: return loc("👀 Look directly at camera", "👀 请正视摄像头，保持平视")
+        case .turnLeft: return loc("👈 Slowly turn your head to the left (~15°)", "👈 请将头部微微向左转动 (约 15°)")
+        case .turnRight: return loc("👉 Slowly turn your head to the right (~15°)", "👉 请将头部微微向右转动 (约 15°)")
+        case .tiltUp: return loc("👆 Slowly tilt your head slightly upward", "👆 请将头部微微向上抬起")
         }
     }
 }
@@ -163,7 +181,7 @@ public final class FaceEnrollmentService: NSObject, CameraCaptureDelegate {
                 stage: currentStage,
                 pose: currentTargetPose,
                 progress: calculateProgress(),
-                message: "⚠️ 视野内检测到多张面孔，请确保只有您一人在镜头前"
+                message: loc("⚠️ Multiple faces detected, please ensure only you are in frame", "⚠️ 视野内检测到多张面孔，请确保只有您一人在镜头前")
             )
         }
 
