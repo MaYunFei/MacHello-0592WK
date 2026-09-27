@@ -15,7 +15,7 @@ public enum TestState: Equatable {
     var icon: String {
         switch self {
         case .idle: return "circle"
-        case .running: return "hourglass.circle"
+        case .running: return "hourglass"
         case .passed: return "checkmark.circle.fill"
         case .warning: return "exclamationmark.circle.fill"
         case .failed: return "xmark.circle.fill"
@@ -24,8 +24,8 @@ public enum TestState: Equatable {
 
     var color: Color {
         switch self {
-        case .idle: return .secondary
-        case .running: return .orange
+        case .idle: return .secondary.opacity(0.4)
+        case .running: return .accentColor
         case .passed: return .green
         case .warning: return .orange
         case .failed: return .red
@@ -151,7 +151,7 @@ final class DiagnosticCaptureHelper: NSObject, CameraCaptureDelegate {
         if isGrayscale {
             if let filter = CIFilter(name: "CIColorControls") {
                 filter.setValue(ciImage, forKey: kCIInputImageKey)
-                filter.setValue(0.0, forKey: kCIInputSaturationKey) // 纯正黑白灰度夜视，不压暗阴影
+                filter.setValue(0.0, forKey: kCIInputSaturationKey) // 纯正黑白灰度夜视
                 if let out = filter.outputImage {
                     ciImage = out
                 }
@@ -262,7 +262,7 @@ public final class DiagnosticViewModel: ObservableObject {
 
     @Published public var isTesting: Bool = false
     @Published public var allPassed: Bool = false
-    @Published public var statusMessage: String = "点击下方按钮开始全面的硬件链路自检"
+    @Published public var statusMessage: String = "请确认硬件后点击下方「开始自检」"
 
     public init() {
         self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
@@ -330,7 +330,7 @@ public final class DiagnosticViewModel: ObservableObject {
                 self.cameraName = "未连接到 Linux 服务端 (\(client.serverURLString))"
                 self.hardwareConfirmed = false
             } else if !client.isHardwareConnected {
-                self.cameraName = "Linux 服务端在线，但未检测到摄像头插入"
+                self.cameraName = "Linux 在线，但未检测到摄像头插入"
                 self.hardwareConfirmed = false
             } else {
                 self.cameraName = "Dell CN-0592WK (局域网 Linux 服务端直连)"
@@ -412,7 +412,7 @@ public final class DiagnosticViewModel: ObservableObject {
                     DispatchQueue.main.async {
                         self.test1State = .failed("未接收到画面 (捕获 0 帧)")
                         self.isTesting = false
-                        self.statusMessage = "可见光测试失败：未捕获到视频帧，请检查相机是否正常供流"
+                        self.statusMessage = "可见光测试失败：未捕获到视频帧，请检查相机供流"
                     }
                     return
                 }
@@ -506,7 +506,7 @@ public final class DiagnosticViewModel: ObservableObject {
             DispatchQueue.main.async {
                 self.test3State = .passed
                 self.test4State = .running
-                self.statusMessage = "正在启动红外夜视镜头 (自动增益爬升中)..."
+                self.statusMessage = "正在启动红外夜视镜头 (自动曝光增益校准中)..."
             }
 
             // Step 4: 捕获 IR 视频流 (切换为红外灰度采集)
@@ -573,7 +573,7 @@ public final class DiagnosticViewModel: ObservableObject {
                         if match.matched {
                             badgeText = "🟢 机主已识别 (\(pct)%)"
                             badgeColor = .green
-                            step5Text = "已识别机主本人 (匹配度: \(pct)%) ✓"
+                            step5Text = "机主本人已命中 (匹配度: \(pct)%)"
                             step5State = .passed
                             finalMessage = "🎉 双目镜头与机主识别全链路通过！匹配度 \(pct)%，红外解锁已就绪。"
                         } else {
@@ -597,9 +597,9 @@ public final class DiagnosticViewModel: ObservableObject {
                         DiagnosticFileManager.shared.log("Step 5: 未录入面容，但红外镜头已成功识别到人脸")
                         badgeText = "👤 检测到人脸 (未录入)"
                         badgeColor = .blue
-                        step5Text = "已检测到人脸 (面容未录入) ℹ️"
+                        step5Text = "已检测到人脸 (面容未录入)"
                         step5State = .passed
-                        finalMessage = "🎉 硬件双目自检通过，已识别人脸！建议点击下方【立即录入面容 ID】。"
+                        finalMessage = "🎉 硬件双目自检通过，已识别人脸！建议点击下方「立即录入面容 ID」。"
                     }
                 } else {
                     DiagnosticFileManager.shared.log("Step 5: 红外镜头未检测到人脸")
@@ -659,250 +659,397 @@ public struct HardwareDiagnosticView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 16) {
-            // 顶部标题与图标
-            HStack(spacing: 16) {
-                Image(nsImage: NSImage(named: "NSApplicationIcon") ?? NSImage())
-                    .resizable()
-                    .frame(width: 50, height: 50)
-                    .cornerRadius(10)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("MacHello 硬件自检与设备确认")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                    Text("请确认连接的模组为 Dell CN-0592WK，并完成可见光与近红外双目自检。")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
+        VStack(spacing: 0) {
+            // 顶部导航栏与标题
+            headerBar
+                .padding(.horizontal, 24)
+                .padding(.top, 20)
+                .padding(.bottom, 16)
 
             Divider()
 
-            // 1. 硬件规格与识别卡片
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("目标支持硬件规格")
-                        .font(.headline)
-                    Spacer()
-                    if vm.isConnected {
-                        Label(MacHelloService.shared.isNetworkModeEnabled ? "局域网硬件已就绪" : "检测到兼容硬件 (0bda:5767)", systemImage: "checkmark.shield.fill")
-                            .font(.caption)
-                            .foregroundColor(.green)
-                    } else {
-                        Label(MacHelloService.shared.isNetworkModeEnabled ? "局域网服务未就绪 / 未插摄像头" : "未检测到目标硬件", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                }
+            // 主体滚动内容区
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 16) {
+                    // 1. 硬件规格与参数卡片
+                    hardwareSpecificationCard
 
-                VStack(spacing: 5) {
-                    infoRow(title: "预期硬件型号", value: "Dell CN-0592WK (Realtek 0bda:5767)")
-                    infoRow(title: "系统识别设备", value: vm.cameraName)
-                    infoRow(title: "近红外支持", value: "850nm 独立发射管 + 640x480 YUY2 红外镜头")
-                }
-                .padding(10)
-                .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-                .cornerRadius(8)
+                    // 2. 双目镜头实拍效果卡片
+                    dualCameraSnapshotCard
 
-                Toggle(isOn: $vm.hardwareConfirmed) {
-                    Text("我已确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组")
-                        .font(.subheadline)
-                }
+                    // 3. 硬件链路自检诊断步骤卡片
+                    diagnosticPipelineCard
 
-                Toggle(isOn: Binding(
-                    get: { vm.isCameraInverted },
-                    set: { _ in vm.toggleCameraInversion() }
-                )) {
-                    HStack(spacing: 4) {
-                        Text("🙃 摄像头倒置安装模式 (旋转 180°)")
-                            .font(.subheadline)
-                        Text("— 适合倒贴在显示器下方使用")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+                    // 状态提示横幅
+                    statusBanner
                 }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
             }
-            .padding(.horizontal, 24)
 
-            // 2. 双镜头实拍照片回显卡片
-            VStack(alignment: .leading, spacing: 8) {
-                Text("双目镜头实拍效果验证")
-                    .font(.headline)
-
-                HStack(spacing: 16) {
-                    // 左侧：RGB 可见光镜头
-                    VStack(spacing: 6) {
-                        HStack {
-                            Text("📷 可见光镜头 (RGB 720P)")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            Spacer()
-                            if vm.rgbImage != nil {
-                                Text("抓拍成功 ✓").font(.caption2).foregroundColor(.green)
-                            }
-                        }
-                        if let img = vm.rgbImage {
-                            Image(nsImage: img)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 250, height: 140)
-                                .clipped()
-                                .cornerRadius(8)
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-                        } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.black.opacity(0.2))
-                                .frame(width: 250, height: 140)
-                                .overlay(
-                                    VStack(spacing: 4) {
-                                        Image(systemName: "camera")
-                                            .font(.title2)
-                                            .foregroundColor(.secondary)
-                                        Text(vm.test1State == .running ? "正在抓拍可见光..." : "点击自检后抓拍")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                )
-                        }
-
-                        if let badge = vm.rgbBadgeText {
-                            HStack {
-                                Text(badge)
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(vm.rgbBadgeColor)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(vm.rgbBadgeColor.opacity(0.12))
-                                    .cornerRadius(6)
-                                Spacer()
-                            }
-                        }
-                    }
-
-                    // 右侧：IR 红外夜视镜头
-                    VStack(spacing: 6) {
-                        HStack {
-                            Text("🌙 红外夜视镜头 (IR 640x480)")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            Spacer()
-                            if vm.irImage != nil {
-                                Text("850nm 补光正常 ✓").font(.caption2).foregroundColor(.green)
-                            }
-                        }
-                        if let img = vm.irImage {
-                            Image(nsImage: img)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 250, height: 140)
-                                .clipped()
-                                .cornerRadius(8)
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.3), lineWidth: 1))
-                        } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.black.opacity(0.2))
-                                .frame(width: 250, height: 140)
-                                .overlay(
-                                    VStack(spacing: 4) {
-                                        Image(systemName: "moon.stars")
-                                            .font(.title2)
-                                            .foregroundColor(.secondary)
-                                        Text(vm.test4State == .running ? "850nm 补光增益抓拍中..." : "等待红外夜视抓拍")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                )
-                        }
-
-                        if let badge = vm.irBadgeText {
-                            HStack {
-                                Text(badge)
-                                    .font(.caption2)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(vm.irBadgeColor)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(vm.irBadgeColor.opacity(0.12))
-                                    .cornerRadius(6)
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 24)
-
-            // 3. 硬件链路测试状态
-            VStack(spacing: 6) {
-                testItemRow(title: "1. 可见光镜头 (RGB 720P) 视频流与画面采样", state: vm.test1State)
-                testItemRow(title: "2. Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: vm.test2State)
-                testItemRow(title: "3. 850nm 近红外发射管打亮与夜视模式写入", state: vm.test3State)
-                testItemRow(title: "4. 近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: vm.test4State)
-                testItemRow(title: "5. 人脸识别特征提取与面容比对打分", state: vm.test5State, customPassedText: vm.test5Detail)
-            }
-            .padding(10)
-            .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
-            .cornerRadius(8)
-            .padding(.horizontal, 24)
-
-            Text(vm.statusMessage)
-                .font(.caption)
-                .foregroundColor(vm.allPassed ? .green : .secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-
-            Spacer()
+            Divider()
 
             // 底部操作栏
-            HStack(spacing: 12) {
-                Button("开始硬件自检") {
-                    vm.runSelfTest()
-                }
-                .disabled(vm.isTesting || !vm.isConnected)
-                .keyboardShortcut(.defaultAction)
-
-                Button("📂 日志与截图") {
-                    DiagnosticFileManager.shared.openFolder()
-                }
-                .font(.subheadline)
-
-                Button("🖼️ 查看全部红外帧") {
-                    DiagnosticFileManager.shared.openIRFramesFolder()
-                }
-                .font(.subheadline)
-
-                Spacer()
-
-                if vm.allPassed && vm.hardwareConfirmed {
-                    Button(FaceDatabase.shared.isEnrolled ? "重新录入面容 ID ➔" : "立即录入面容 ID ➔") {
-                        UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
-                        onStartEnrollment()
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-
-                Button(vm.allPassed ? "完成" : "关闭") {
-                    if vm.allPassed && vm.hardwareConfirmed {
-                        UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
-                    }
-                    onDismiss()
-                }
-            }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 16)
+            bottomActionBar
+                .padding(.horizontal, 24)
+                .padding(.vertical, 14)
+                .background(Color(NSColor.windowBackgroundColor).opacity(0.8))
         }
-        .frame(width: 580, height: 720)
+        .frame(width: 620, height: 750)
+        .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             vm.refreshHardwareInfo()
         }
     }
 
-    private func infoRow(title: String, value: String) -> some View {
-        HStack {
+    // MARK: - 顶部导航栏
+    private var headerBar: some View {
+        HStack(spacing: 16) {
+            Image(nsImage: NSImage(named: "NSApplicationIcon") ?? NSImage())
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .shadow(color: Color.black.opacity(0.12), radius: 4, x: 0, y: 2)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("硬件自检与设备确认")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Text("Dell CN-0592WK 双目红外识别模组链路校准")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            // 连接状态胶囊
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(vm.isConnected ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(vm.isConnected ? (MacHelloService.shared.isNetworkModeEnabled ? "局域网硬件已就绪" : "0bda:5767 已连接") : "未检测到硬件")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(vm.isConnected ? .green : .red)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background((vm.isConnected ? Color.green : Color.red).opacity(0.1))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder((vm.isConnected ? Color.green : Color.red).opacity(0.25), lineWidth: 1)
+            )
+        }
+    }
+
+    // MARK: - 1. 硬件规格与参数卡片
+    private var hardwareSpecificationCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("硬件规格与识别", systemImage: "cpu.fill")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+
+            VStack(spacing: 8) {
+                specRow(title: "目标硬件型号", value: "Dell CN-0592WK (Realtek 0bda:5767)", icon: "target")
+                specRow(title: "当前系统设备", value: vm.cameraName, icon: "video.fill")
+                specRow(title: "红外传感模组", value: "850nm 独立发射管 + 640x480 YUY2", icon: "moon.stars.fill")
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            Toggle(isOn: $vm.hardwareConfirmed) {
+                Text("确认当前连接的设备是 **Dell CN-0592WK** (0bda:5767) 硬件双目模组")
+                    .font(.subheadline)
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+
+            Divider()
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("摄像头倒置安装模式 (旋转 180°)")
+                        .font(.subheadline)
+                    Text("画面旋转 180°，适合将模组倒贴在显示器下方使用")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: Binding(
+                    get: { vm.isCameraInverted },
+                    set: { _ in vm.toggleCameraInversion() }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+            }
+        }
+        .padding(14)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(NSColor.separatorColor).opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    // MARK: - 2. 双目镜头实拍效果卡片
+    private var dualCameraSnapshotCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("双目镜头实拍效果验证", systemImage: "camera.fill")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+
+            HStack(spacing: 14) {
+                // 左侧：RGB 可见光镜头
+                cameraFeedView(
+                    title: "可见光镜头 (RGB 720P)",
+                    systemIcon: "camera.fill",
+                    image: vm.rgbImage,
+                    badgeText: vm.rgbBadgeText,
+                    badgeColor: vm.rgbBadgeColor,
+                    isRunning: vm.test1State == .running,
+                    runningText: "正在捕获可见光画面..."
+                )
+
+                // 右侧：IR 红外夜视镜头
+                cameraFeedView(
+                    title: "红外夜视镜头 (IR 640x480)",
+                    systemIcon: "moon.stars.fill",
+                    image: vm.irImage,
+                    badgeText: vm.irBadgeText,
+                    badgeColor: vm.irBadgeColor,
+                    isRunning: vm.test4State == .running,
+                    runningText: "850nm 补光抓拍中..."
+                )
+            }
+        }
+        .padding(14)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(NSColor.separatorColor).opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    private func cameraFeedView(
+        title: String,
+        systemIcon: String,
+        image: NSImage?,
+        badgeText: String?,
+        badgeColor: Color,
+        isRunning: Bool,
+        runningText: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.black.opacity(0.85))
+                    .frame(height: 155)
+
+                if let img = image {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(maxWidth: .infinity, maxHeight: 155)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                } else {
+                    VStack(spacing: 8) {
+                        if isRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(runningText)
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.8))
+                        } else {
+                            Image(systemName: systemIcon)
+                                .font(.system(size: 28))
+                                .foregroundColor(.white.opacity(0.35))
+                            Text("点击自检后抓拍")
+                                .font(.caption2)
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                    }
+                }
+
+                // 底部状态胶囊
+                if let badge = badgeText {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Text(badge)
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.black.opacity(0.65))
+                                .clipShape(Capsule())
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(badgeColor.opacity(0.8), lineWidth: 1)
+                                )
+                            Spacer()
+                        }
+                        .padding(8)
+                    }
+                }
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+            )
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - 3. 硬件链路诊断步骤卡片
+    private var diagnosticPipelineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("硬件全链路诊断步骤", systemImage: "checklist")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+
+            VStack(spacing: 6) {
+                testItemRow(index: 1, title: "可见光镜头 (RGB 720P) 视频流与画面采样", state: vm.test1State)
+                Divider()
+                testItemRow(index: 2, title: "Realtek UVC 扩展单元 (Unit 4) 5步状态机握手", state: vm.test2State)
+                Divider()
+                testItemRow(index: 3, title: "850nm 近红外发射管点亮与夜视模式切换", state: vm.test3State)
+                Divider()
+                testItemRow(index: 4, title: "近红外物理镜头 (640x480 YUY2) 数据帧抓取", state: vm.test4State)
+                Divider()
+                testItemRow(index: 5, title: "人脸识别特征提取与面容比对打分", state: vm.test5State, customPassedText: vm.test5Detail)
+            }
+            .padding(12)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .padding(14)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color(NSColor.separatorColor).opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    // MARK: - 状态横幅
+    private var statusBanner: some View {
+        HStack(spacing: 8) {
+            if vm.isTesting {
+                ProgressView()
+                    .controlSize(.small)
+            } else if vm.allPassed {
+                Image(systemName: "checkmark.seal.fill")
+                    .foregroundColor(.green)
+            } else {
+                Image(systemName: "info.circle.fill")
+                    .foregroundColor(.secondary)
+            }
+
+            Text(vm.statusMessage)
+                .font(.subheadline)
+                .foregroundColor(vm.allPassed ? .green : .secondary)
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            (vm.allPassed ? Color.green : Color.secondary).opacity(0.08)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    // MARK: - 底部操作栏
+    private var bottomActionBar: some View {
+        HStack(spacing: 12) {
+            Button(action: {
+                vm.runSelfTest()
+            }) {
+                HStack(spacing: 6) {
+                    if vm.isTesting {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "play.fill")
+                    }
+                    Text(vm.isTesting ? "正在自检..." : "开始硬件自检")
+                }
+                .frame(minWidth: 100)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(vm.isTesting || !vm.isConnected)
+            .keyboardShortcut(.defaultAction)
+
+            Button(action: {
+                DiagnosticFileManager.shared.openFolder()
+            }) {
+                Label("日志与截图", systemImage: "folder")
+            }
+            .buttonStyle(.bordered)
+
+            Button(action: {
+                DiagnosticFileManager.shared.openIRFramesFolder()
+            }) {
+                Label("红外相册", systemImage: "photo.stack")
+            }
+            .buttonStyle(.bordered)
+
+            Spacer()
+
+            if vm.allPassed && vm.hardwareConfirmed {
+                Button(action: {
+                    UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
+                    onStartEnrollment()
+                }) {
+                    HStack(spacing: 4) {
+                        Text(FaceDatabase.shared.isEnrolled ? "重新录入面容 ID" : "立即录入面容 ID")
+                        Image(systemName: "arrow.right")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+            }
+
+            Button(vm.allPassed ? "完成" : "关闭") {
+                if vm.allPassed && vm.hardwareConfirmed {
+                    UserDefaults.standard.set(true, forKey: "com.machello.hardwareVerified")
+                }
+                onDismiss()
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    // MARK: - 辅助子视图
+    private func specRow(title: String, value: String, icon: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundColor(.secondary)
+                .frame(width: 16)
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -913,26 +1060,54 @@ public struct HardwareDiagnosticView: View {
         }
     }
 
-    private func testItemRow(title: String, state: TestState, customPassedText: String? = nil) -> some View {
-        HStack {
-            Image(systemName: state.icon)
-                .foregroundColor(state.color)
-                .frame(width: 20)
+    private func testItemRow(index: Int, title: String, state: TestState, customPassedText: String? = nil) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                switch state {
+                case .running:
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.75)
+                default:
+                    Image(systemName: state.icon)
+                        .foregroundColor(state.color)
+                        .font(.system(size: 15))
+                }
+            }
+            .frame(width: 20)
+
             Text(title)
                 .font(.subheadline)
+
             Spacer()
+
             switch state {
             case .idle:
-                Text("等待开始").font(.caption).foregroundColor(.secondary)
+                Text("等待开始")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             case .running:
-                Text("正在测试...").font(.caption).foregroundColor(.orange)
+                Text("正在测试...")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .foregroundColor(.accentColor)
             case .passed:
-                Text(customPassedText ?? "正常 ✓").font(.caption).fontWeight(.semibold).foregroundColor(.green)
+                Text(customPassedText ?? "通过 ✓")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.green)
             case .warning(let warn):
-                Text(warn).font(.caption).fontWeight(.semibold).foregroundColor(.orange)
+                Text(warn)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.orange)
             case .failed(let err):
-                Text("失败: \(err)").font(.caption).foregroundColor(.red)
+                Text("失败: \(err)")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.red)
             }
         }
+        .padding(.vertical, 3)
     }
 }

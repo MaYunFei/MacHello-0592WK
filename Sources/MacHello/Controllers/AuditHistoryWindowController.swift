@@ -23,7 +23,7 @@ public final class AuditHistoryWindowController: NSObject, NSWindowDelegate {
         let hostingController = NSHostingController(rootView: historyView)
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 540),
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false

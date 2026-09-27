@@ -23,3 +23,10 @@ snapshot_*.jpg
 *.jpg
 *.png
 *.log
+
+# Agent & Workspace Cache
+.agents/
+.claude/
+.pi/
+skills-lock.json
+

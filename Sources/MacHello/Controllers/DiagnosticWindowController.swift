@@ -27,12 +27,14 @@ public final class DiagnosticWindowController: NSObject, NSWindowDelegate {
         let hostingController = NSHostingController(rootView: diagnosticView)
 
         let newWindow = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 750),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         newWindow.title = "MacHello 硬件自检与设备确认"
+        newWindow.titlebarAppearsTransparent = true
+        newWindow.titleVisibility = .hidden
         newWindow.isReleasedWhenClosed = false
         newWindow.center()
         newWindow.contentViewController = hostingController

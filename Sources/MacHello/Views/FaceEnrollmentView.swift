@@ -8,7 +8,7 @@ final class EnrollmentViewModel: ObservableObject, FaceEnrollmentDelegate {
     @Published var targetPose: TargetPose = .center
     @Published var completedPoses: Set<TargetPose> = []
     @Published var progress: Double = 0.0
-    @Published var instruction: String = "👀 请正视摄像头，保持平视"
+    @Published var instruction: String = "请正视摄像头，保持平视"
     @Published var isMatchingCurrentPose: Bool = false
     @Published var isPoseFrozen: Bool = false
     @Published var showAlternativePrompt: Bool = false
@@ -61,7 +61,13 @@ final class EnrollmentViewModel: ObservableObject, FaceEnrollmentDelegate {
             self.stage = stage
             self.targetPose = pose
             self.progress = progress
-            self.instruction = message
+            // 清洗 emoji，保持苹果原生的高级感排版
+            let cleanMsg = message
+                .replacingOccurrences(of: "👀 ", with: "")
+                .replacingOccurrences(of: "👈 ", with: "")
+                .replacingOccurrences(of: "👉 ", with: "")
+                .replacingOccurrences(of: "👆 ", with: "")
+            self.instruction = cleanMsg
         }
     }
 
@@ -112,22 +118,24 @@ struct FaceEnrollmentView: View {
 
     var body: some View {
         ZStack {
-            // 背景暗色材质
+            // 背景深色极简材质
             Color(NSColor.windowBackgroundColor)
                 .ignoresSafeArea()
 
             if viewModel.isFinished {
-                // 完成界面
                 successView
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
             } else if viewModel.showAlternativePrompt {
-                // 替用外貌提示卡片
                 alternativePromptView
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
             } else {
-                // 主录入引导视图
                 enrollmentMainView
+                    .transition(.opacity)
             }
         }
-        .frame(width: 480, height: 560)
+        .frame(width: 500, height: 600)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.isFinished)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.showAlternativePrompt)
         .onAppear {
             viewModel.start()
         }
@@ -136,22 +144,37 @@ struct FaceEnrollmentView: View {
         }
     }
 
-    // MARK: - 主录入界面
+    // MARK: - 主录入界面 (Apple Face ID 风格)
     private var enrollmentMainView: some View {
-        VStack(spacing: 20) {
-            // 顶部阶段指示
+        VStack(spacing: 0) {
+            // 顶部导航栏
             HStack {
-                Text(viewModel.stage == .regular ? "步骤 1/2：日常 / 佩戴眼镜外观" : "步骤 2/2：脱镜 / 替用外观")
-                    .font(.headline)
-                    .foregroundColor(.primary)
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 6, height: 6)
+                    Text(viewModel.stage == .regular ? "步骤 1/2 • 日常外观" : "步骤 2/2 • 替用外观")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(Color(NSColor.controlBackgroundColor))
+                .clipShape(Capsule())
+
                 Spacer()
+
                 Button(action: {
                     viewModel.cancel()
                     onDismiss?()
                 }) {
-                    Image(systemName: "xmark.circle.fill")
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(.secondary)
-                        .font(.title3)
+                        .frame(width: 24, height: 24)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
             }
@@ -160,7 +183,7 @@ struct FaceEnrollmentView: View {
 
             Spacer()
 
-            // 核心环形扫描器与实时红外预览
+            // 核心扫描环与圆形视频取景框
             ZStack {
                 // 1. 动态四段圆环 (上、下、左、右)
                 FaceIDProgressRing(
@@ -168,114 +191,144 @@ struct FaceEnrollmentView: View {
                     currentPose: viewModel.targetPose,
                     isMatching: viewModel.isMatchingCurrentPose
                 )
-                .frame(width: 250, height: 250)
+                .frame(width: 260, height: 260)
 
                 // 2. 内部红外实时视频镜面预览
                 if let cgImage = viewModel.previewImage {
                     Image(decorative: cgImage, scale: 1.0, orientation: .up)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .scaleEffect(x: -1, y: 1) // 水平镜像翻转，符合照镜子习惯
-                        .frame(width: 220, height: 220)
+                        .scaleEffect(x: -1, y: 1) // 水平镜像翻转
+                        .frame(width: 228, height: 228)
                         .clipShape(Circle())
-                        .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 1))
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.15), lineWidth: 1.5)
+                        )
                 } else {
                     Circle()
-                        .fill(Color.black.opacity(0.8))
-                        .frame(width: 220, height: 220)
+                        .fill(Color.black.opacity(0.85))
+                        .frame(width: 228, height: 228)
                         .overlay(
-                            VStack(spacing: 8) {
+                            VStack(spacing: 10) {
                                 ProgressView()
-                                Text("启动红外摄像头...")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .controlSize(.small)
+                                Text("正在开启红外夜视镜头...")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.6))
                             }
                         )
                 }
 
-                // 3. 匹配时的高亮发光环 (采用平滑不透明度渐变，杜绝节点反复创建/销毁引发的 UI 闪烁)
+                // 3. 匹配时的高光呼吸发光环
                 Circle()
-                    .stroke(Color.green.opacity(0.8), lineWidth: 4)
-                    .frame(width: 224, height: 224)
+                    .stroke(Color.green.opacity(0.85), lineWidth: 3.5)
+                    .frame(width: 232, height: 232)
                     .blur(radius: 2)
                     .opacity(viewModel.isMatchingCurrentPose ? 1.0 : 0.0)
-                    .animation(.easeInOut(duration: 0.25), value: viewModel.isMatchingCurrentPose)
+                    .scaleEffect(viewModel.isMatchingCurrentPose ? 1.02 : 0.98)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.75), value: viewModel.isMatchingCurrentPose)
 
-                // 4. 定格成功浮层微标
+                // 4. 定格成功微标浮层 (Spring 弹性弹现)
                 if viewModel.isPoseFrozen {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 40))
+                            .font(.system(size: 44))
                             .foregroundColor(.green)
-                            .shadow(color: .black.opacity(0.7), radius: 6)
+                            .shadow(color: Color.black.opacity(0.5), radius: 8, x: 0, y: 4)
+
                         Text("角度已捕获")
                             .font(.subheadline)
                             .fontWeight(.bold)
                             .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.8), radius: 4)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Capsule())
                     }
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
                 }
             }
 
             Spacer()
 
-            // 底部指示文案 (ZStack 固定高度布局，杜绝高度/文字突变跳动导致的闪烁)
-            VStack(spacing: 10) {
+            // 底部指示文案区
+            VStack(spacing: 8) {
                 Text(viewModel.instruction)
                     .font(.title3)
-                    .fontWeight(.semibold)
+                    .fontWeight(.bold)
                     .multilineTextAlignment(.center)
                     .foregroundColor(viewModel.isMatchingCurrentPose ? .green : .primary)
-                    .animation(.easeInOut(duration: 0.25), value: viewModel.isMatchingCurrentPose)
+                    .animation(.easeInOut(duration: 0.2), value: viewModel.isMatchingCurrentPose)
 
                 ZStack {
-                    Text(viewModel.isPoseFrozen ? "✅ 角度捕获成功，定格中..." : "✓ 保持当前姿势，正在提取特征...")
+                    Text(viewModel.isPoseFrozen ? "角度捕获成功，定格中..." : "保持当前姿态，正在录入特征...")
                         .font(.subheadline)
                         .foregroundColor(.green)
                         .opacity((viewModel.isMatchingCurrentPose || viewModel.isPoseFrozen) ? 1.0 : 0.0)
 
-                    Text("请缓慢转动面部，配合指示")
+                    Text("缓慢转动面部，对齐指示角度")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .opacity((!viewModel.isMatchingCurrentPose && !viewModel.isPoseFrozen) ? 1.0 : 0.0)
                 }
-                .animation(.easeInOut(duration: 0.25), value: viewModel.isMatchingCurrentPose)
-                .animation(.easeInOut(duration: 0.25), value: viewModel.isPoseFrozen)
+                .animation(.easeInOut(duration: 0.2), value: viewModel.isMatchingCurrentPose)
+                .animation(.easeInOut(duration: 0.2), value: viewModel.isPoseFrozen)
             }
-            .frame(height: 60)
+            .frame(height: 56)
 
-            // 进度条
-            ProgressView(value: viewModel.progress, total: 1.0)
-                .progressViewStyle(LinearProgressViewStyle(tint: .accentColor))
-                .padding(.horizontal, 40)
-                .padding(.bottom, 24)
+            // 进度指示器
+            VStack(spacing: 8) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.2))
+                            .frame(height: 5)
+
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(viewModel.progress))), height: 5)
+                            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.progress)
+                    }
+                }
+                .frame(height: 5)
+            }
+            .padding(.horizontal, 48)
+            .padding(.bottom, 32)
         }
     }
 
     // MARK: - 替用外观询问界面
     private var alternativePromptView: some View {
         VStack(spacing: 24) {
-            Image(systemName: "eyeglasses")
-                .font(.system(size: 54))
-                .foregroundColor(.accentColor)
-                .padding(.top, 40)
+            Spacer()
 
-            VStack(spacing: 8) {
-                Text("第一阶段录入完成！")
-                    .font(.title2)
-                    .fontWeight(.bold)
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.12))
+                    .frame(width: 90, height: 90)
 
-                Text("建议添加【脱镜 / 替用外貌】")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
+                Image(systemName: "eyeglasses")
+                    .font(.system(size: 44))
+                    .foregroundColor(.accentColor)
             }
 
-            Text("如果您平时戴眼镜，请摘下眼镜再录入一次。\n这样无论您是否佩戴眼镜，Mac 都能快速识别并秒解。")
+            VStack(spacing: 8) {
+                Text("第一阶段录入完成")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+
+                Text("建议设置脱镜 / 替用外观")
+                    .font(.title2)
+                    .fontWeight(.bold)
+            }
+
+            Text("如果您平时戴眼镜，请摘下眼镜再录入一次。\n这样无论您是否佩戴眼镜，Mac 都能快速识别并秒级解锁。")
                 .font(.body)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
-                .padding(.horizontal, 36)
+                .padding(.horizontal, 40)
 
             Spacer()
 
@@ -286,7 +339,7 @@ struct FaceEnrollmentView: View {
                     Text("摘下眼镜并开始录入")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
+                        .padding(.vertical, 8)
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -294,6 +347,7 @@ struct FaceEnrollmentView: View {
                     viewModel.skipAlternative()
                 }) {
                     Text("跳过此步 (平时不戴眼镜)")
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -306,14 +360,21 @@ struct FaceEnrollmentView: View {
     // MARK: - 录入完成界面
     private var successView: some View {
         VStack(spacing: 24) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64))
-                .foregroundColor(.green)
-                .padding(.top, 60)
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(Color.green.opacity(0.12))
+                    .frame(width: 96, height: 96)
+
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 58))
+                    .foregroundColor(.green)
+            }
 
             VStack(spacing: 8) {
                 Text("面容 ID 已设置完成")
-                    .font(.title2)
+                    .font(.title)
                     .fontWeight(.bold)
 
                 Text("已提取并存储 \(viewModel.totalSamplesCount) 组红外 3D 特征向量")
@@ -321,7 +382,7 @@ struct FaceEnrollmentView: View {
                     .foregroundColor(.secondary)
             }
 
-            Text("现在您可以使用戴尔 0592WK 摄像头\n进行人脸感应亮屏与近红外活体解锁。")
+            Text("现在您可以使用 Dell CN-0592WK 摄像头\n进行人脸感应亮屏与近红外活体全场景解锁。")
                 .font(.body)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.secondary)
@@ -335,7 +396,7 @@ struct FaceEnrollmentView: View {
                 Text("完成")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent)
             .padding(.horizontal, 48)
@@ -344,7 +405,7 @@ struct FaceEnrollmentView: View {
     }
 }
 
-// MARK: - iPhone 风格四段式环形进度指示器
+// MARK: - Apple Face ID 风格动态四段圆环
 struct FaceIDProgressRing: View {
     let completedPoses: Set<TargetPose>
     let currentPose: TargetPose
@@ -354,23 +415,31 @@ struct FaceIDProgressRing: View {
         ZStack {
             // 背景底环
             Circle()
-                .stroke(Color.white.opacity(0.12), lineWidth: 10)
+                .stroke(Color.white.opacity(0.1), lineWidth: 10)
 
-            // 1. 上段 (微微抬头: 45° ~ 135°)
+            // 1. 上段 (微微抬头: 225° ~ 315°)
             ArcSegment(startAngle: .degrees(225), endAngle: .degrees(315))
                 .stroke(segmentColor(for: .tiltUp), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .scaleEffect(segmentScale(for: .tiltUp))
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: completedPoses.contains(.tiltUp))
 
-            // 2. 下段 (正视镜头: 225° ~ 315°)
+            // 2. 下段 (正视镜头: 45° ~ 135°)
             ArcSegment(startAngle: .degrees(45), endAngle: .degrees(135))
                 .stroke(segmentColor(for: .center), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .scaleEffect(segmentScale(for: .center))
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: completedPoses.contains(.center))
 
             // 3. 左段 (向左微转: 135° ~ 225°)
             ArcSegment(startAngle: .degrees(135), endAngle: .degrees(225))
                 .stroke(segmentColor(for: .turnLeft), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .scaleEffect(segmentScale(for: .turnLeft))
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: completedPoses.contains(.turnLeft))
 
-            // 4. 右段 (向右微转: 315° ~ 45°)
+            // 4. 右段 (向右微转: 315° ~ 405°)
             ArcSegment(startAngle: .degrees(315), endAngle: .degrees(405))
                 .stroke(segmentColor(for: .turnRight), style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .scaleEffect(segmentScale(for: .turnRight))
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: completedPoses.contains(.turnRight))
         }
     }
 
@@ -378,9 +447,19 @@ struct FaceIDProgressRing: View {
         if completedPoses.contains(pose) {
             return Color.green
         } else if currentPose == pose {
-            return isMatching ? Color.green.opacity(0.8) : Color.accentColor
+            return isMatching ? Color.green.opacity(0.85) : Color.accentColor
         } else {
             return Color.clear
+        }
+    }
+
+    private func segmentScale(for pose: TargetPose) -> CGFloat {
+        if completedPoses.contains(pose) {
+            return 1.02
+        } else if currentPose == pose && isMatching {
+            return 1.03
+        } else {
+            return 1.0
         }
     }
 }
