@@ -320,17 +320,6 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
                 let match = self.faceDb.match(embedding: face.embedding, threshold: 0.58)
                 if match.matched {
                     print("[Presence] ✓ 局域网摄像头检测到机主！(Apple NPU 识别打分: \(String(format: "%.2f", match.highestScore)))")
-                    let isWake = self.displayManager.isDisplayAsleep
-                    let isLocked = AutoAuthManager.shared.isScreenLocked()
-                    if isWake || isLocked {
-                        let reason = isWake ? "wake_display" : "lockscreen"
-                        AuthAuditLogger.shared.recordAuth(
-                            cgImage: cgImage,
-                            reason: reason,
-                            score: match.highestScore,
-                            success: true
-                        )
-                    }
                     DispatchQueue.main.async {
                         self.handleOwnerDetectedOverNetwork(score: match.highestScore)
                     }
@@ -349,9 +338,11 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         if displayManager.isDisplayAsleep {
             displayManager.wakeDisplay()
             emitStateChange()
-            AutoAuthManager.shared.unlockScreenIfNeeded()
+            // 遵循 Windows Hello 规范：人脸感应仅负责点亮屏幕，严禁越权直接模拟密码解锁桌面。
+            // 屏幕亮起后由 AutoAuthManager 统一启动 850nm 红外相机进行活体 Face ID 解锁与抓拍留存。
         } else if AutoAuthManager.shared.isScreenLocked() {
-            AutoAuthManager.shared.unlockScreenIfNeeded()
+            // 若当前处于锁屏状态，触发安全的红外 Face ID 解锁流程
+            AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
             emitStateChange()
         } else if changed {
             emitStateChange()
@@ -367,14 +358,13 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         isOwnerVerified = true
         lastSeenOwnerTime = Date()
 
-        // 收到 Linux 局域网服务端检测到机主靠近：如果屏幕休眠，毫秒级点亮并自动解锁进桌面！
+        // 收到 Linux 局域网服务端检测到机主靠近：唤醒屏幕，由系统亮屏广播联动 AutoAuthManager 启动红外 Face ID
         if displayManager.isDisplayAsleep {
             displayManager.wakeDisplay()
             emitStateChange()
-            AutoAuthManager.shared.unlockScreenIfNeeded()
         } else {
             if AutoAuthManager.shared.isScreenLocked() {
-                AutoAuthManager.shared.unlockScreenIfNeeded()
+                AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
             }
             if changed {
                 emitStateChange()
@@ -451,25 +441,16 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
         lastSeenOwnerTime = Date()
         lastProbeSuccessTime = Date()
 
-        // 1. 如果屏幕已息屏，机主出现立刻点亮屏幕并自动解锁进桌面！
+        // 1. 如果屏幕已息屏，机主出现点亮屏幕（遵循 Windows Hello 规范：仅唤醒屏幕，由系统亮屏联动红外 Face ID 解锁）
         if displayManager.isDisplayAsleep {
-            if let pb = pixelBuffer {
-                AuthAuditLogger.shared.recordAuth(
-                    pixelBuffer: pb,
-                    reason: "wake_display",
-                    score: score,
-                    success: true
-                )
-            }
             displayManager.wakeDisplay()
             irController.resetToRGB()
             pulseCycleCounter = 0
             emitStateChange()
-            AutoAuthManager.shared.unlockScreenIfNeeded()
         } else {
-            // 如果屏幕当前正处于锁定界面 (例如快捷键 Cmd+Ctrl+Q 锁定)，机主在位立刻自动解锁
+            // 如果屏幕当前正处于锁定界面 (例如快捷键 Cmd+Ctrl+Q 锁定)，触发红外 Face ID 解锁流程
             if AutoAuthManager.shared.isScreenLocked() {
-                AutoAuthManager.shared.unlockScreenIfNeeded()
+                AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
             }
             if changed {
                 emitStateChange()

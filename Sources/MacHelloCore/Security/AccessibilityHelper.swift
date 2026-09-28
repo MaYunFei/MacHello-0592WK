@@ -137,4 +137,62 @@ public final class AccessibilityHelper {
             delUp.post(tap: .cghidEventTap)
         }
     }
+
+    /// 激活并聚焦 SecurityAgent 密码弹窗
+    /// 解决状态栏 LSUIElement 应用点击测试或后台触发时，SecurityAgent 未获前台焦点导致安全拦截与键盘事件丢失的问题
+    @discardableResult
+    public func focusSecurityAgentPrompt(timeout: TimeInterval = 0.6) -> Bool {
+        let runningApps = NSWorkspace.shared.runningApplications
+        guard let secApp = runningApps.first(where: {
+            $0.bundleIdentifier == "com.apple.SecurityAgent" || $0.localizedName == "SecurityAgent"
+        }) else {
+            return false
+        }
+
+        let appElement = AXUIElementCreateApplication(secApp.processIdentifier)
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            var windowsElem: AnyObject?
+            let err = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsElem)
+            if err == .success, let windows = windowsElem as? [AXUIElement], !windows.isEmpty {
+                // 1. 激活 SecurityAgent 置于最前
+                if #available(macOS 14.0, *) {
+                    secApp.activate()
+                } else {
+                    secApp.activate(options: .activateIgnoringOtherApps)
+                }
+
+                // 2. 递归查找密码输入框 AXSecureTextField，清空旧输入并置入焦点
+                func findAndFocusSecureField(_ el: AXUIElement) -> Bool {
+                    var subrole: AnyObject?
+                    AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+                    if (subrole as? String) == "AXSecureTextField" {
+                        _ = AXUIElementSetAttributeValue(el, kAXValueAttribute as CFString, "" as CFTypeRef)
+                        _ = AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                        return true
+                    }
+                    var children: AnyObject?
+                    AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &children)
+                    if let childrenList = children as? [AXUIElement] {
+                        for child in childrenList {
+                            if findAndFocusSecureField(child) {
+                                return true
+                            }
+                        }
+                    }
+                    return false
+                }
+
+                for w in windows {
+                    if findAndFocusSecureField(w) {
+                        return true
+                    }
+                }
+                return true
+            }
+            usleep(50000) // 50ms 轮询等待窗口上屏渲染完成
+        }
+        return false
+    }
 }

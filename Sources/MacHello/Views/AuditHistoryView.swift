@@ -44,7 +44,7 @@ public struct AuditHistoryView: View {
 
     private var selectedRecord: AuditRecord? {
         if let id = selectedRecordId {
-            return logger.records.first(where: { $0.id == id })
+            return filteredRecords.first(where: { $0.id == id }) ?? filteredRecords.first
         }
         return filteredRecords.first
     }
@@ -103,9 +103,7 @@ public struct AuditHistoryView: View {
             }
         }
         .onChange(of: filterMode) { _ in
-            if let first = filteredRecords.first {
-                selectedRecordId = first.id
-            }
+            selectedRecordId = filteredRecords.first?.id
         }
     }
 

@@ -74,6 +74,8 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     private var currentReason: AuthReason = .adminPrompt
     private var authFrameCount = 0
     private var lastAuthSuccessTime: Date = .distantPast
+    private var lastAttemptPixelBuffer: CVPixelBuffer?
+    private var highestFailedScore: Float = 0.0
 
     private override init() {
         super.init()
@@ -194,6 +196,8 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             self.isAuthenticating = true
             self.currentReason = reason
             self.authFrameCount = 0
+            self.lastAttemptPixelBuffer = nil
+            self.highestFailedScore = 0.0
             print("[AutoAuth] 触发 Face ID (\(reason == .lockScreen ? "锁屏解锁" : "管理员弹窗"))，启动 850nm 红外夜视人脸核验...")
 
             // 1. 点亮 850nm 红外并启动 640x480 YUY2 红外流
@@ -214,6 +218,15 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                 self.authQueue.async {
                     if self.isAuthenticating {
                         print("[AutoAuth] 红外核验超时未比对成功，自动复位")
+                        if let failedBuffer = self.lastAttemptPixelBuffer {
+                            let reasonStr = (self.currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                            AuthAuditLogger.shared.recordAuth(
+                                pixelBuffer: failedBuffer,
+                                reason: reasonStr,
+                                score: self.highestFailedScore,
+                                success: false
+                            )
+                        }
                         self.stopAuth()
                     }
                 }
@@ -280,6 +293,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
         authFrameCount += 1
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        lastAttemptPixelBuffer = pixelBuffer
 
         // 微软 Windows Hello 规范：偶数帧为 850nm 满血补光帧，奇数帧为环境光无补光帧
         if isIR {
@@ -288,6 +302,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                 let faces = extractor.extract(from: pixelBuffer)
                 for face in faces {
                     let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                    highestFailedScore = max(highestFailedScore, match.highestScore)
                     if match.matched {
                         let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
                         print("[AutoAuth] ✓ 局域网红外人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
@@ -308,6 +323,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                     let faces = extractor.extract(from: pixelBuffer)
                     for face in faces {
                         let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                        highestFailedScore = max(highestFailedScore, match.highestScore)
                         if match.matched {
                             self.lastLitPixelBuffer = pixelBuffer
                             self.pendingMatch = (match.highestScore, face.boundingBox)
@@ -337,6 +353,13 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                         return
                     } else {
                         print("[AutoAuth] ⚠️ 活体防伪拦截：无 850nm 频闪脉冲响应 (Delta: \(String(format: "%.3f", liveness.strobeDelta)))，拒绝虚假屏幕/照片攻击！")
+                        let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                        AuthAuditLogger.shared.recordAuth(
+                            pixelBuffer: lit,
+                            reason: reasonStr,
+                            score: pending.score,
+                            success: false
+                        )
                         lastLitPixelBuffer = nil
                         pendingMatch = nil
                     }
@@ -347,6 +370,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             let faces = extractor.extract(from: pixelBuffer)
             for face in faces {
                 let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                highestFailedScore = max(highestFailedScore, match.highestScore)
                 if match.matched {
                     let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
                     print("[AutoAuth] ✓ 机主全彩人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
@@ -366,6 +390,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     private func onAuthSucceeded() {
         let reason = currentReason
         isAuthenticating = false
+        lastAttemptPixelBuffer = nil
         lastAuthSuccessTime = Date()
 
         // 停止相机并安全复位硬件
@@ -401,11 +426,17 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
             } else {
-                // 【绝对安全铁律 2】：管理员弹窗模式下，前台应用必须确系 SecurityAgent！
+                // 【绝对安全铁律 2】：管理员弹窗模式下，确系 SecurityAgent 提权框处于活跃状态！
+                // 解决：MacHello 作为菜单栏 LSUIElement 应用，点击测试或后台触发时，
+                // SecurityAgent 浮动窗口处于顶级 Layer 1000 但可能未被系统标记为 frontmostApplication。
+                // 故先显式激活并聚焦 SecurityAgent 密码输入框：
+                let isSecPromptReady = self.accessibility.focusSecurityAgentPrompt()
+                usleep(80000) // 80ms 等待 WindowServer 完成焦点与图层置换
+
                 let frontmost = NSWorkspace.shared.frontmostApplication
                 let isSecurityAgent = (frontmost?.bundleIdentifier == "com.apple.SecurityAgent" || frontmost?.localizedName == "SecurityAgent")
-                guard isSecurityAgent else {
-                    print("[AutoAuth] ⚠️ 致命安全拦截：当前前台窗口不是 SecurityAgent（当前是: \(frontmost?.localizedName ?? "空")），绝对禁止输入密码！")
+                guard isSecurityAgent || isSecPromptReady else {
+                    print("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的 SecurityAgent 提权弹窗（当前前台是: \(frontmost?.localizedName ?? "空")），绝对禁止输入密码！")
                     return
                 }
 
@@ -417,6 +448,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
     private func stopAuth() {
         isAuthenticating = false
+        lastAttemptPixelBuffer = nil
         cameraService.stop()
         irController.resetToRGB()
     }

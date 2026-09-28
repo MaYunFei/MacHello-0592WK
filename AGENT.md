@@ -137,7 +137,7 @@
    - **真锁屏机制**：无操作超时必须调用 `SACLockScreenImmediate()`（调用 macOS `login.framework` 原生接口），确保系统真正且立刻切入 `loginwindow` 锁屏状态，严禁仅调用 `pmset displaysleepnow`（单纯息屏未锁屏会导致按键泄露至桌面应用）；
    - **模拟键入绝对双重核验**：
      - 若为锁屏解锁（`.lockScreen`），**必须在发送按键前严格多重校验 `isScreenLocked() == true`**。一旦检测到当前不在锁屏界面（已处于普通桌面窗口），必须立即熔断、绝对严禁发送任何按键，坚决防止密码被打入终端或聊天对话框；
-     - 若为管理员弹窗提权（`.adminPrompt`），**必须严格核验前台应用确系 `com.apple.SecurityAgent`**。如果不是，坚决拒绝模拟按键。
+     - 若为管理员弹窗提权（`.adminPrompt`），**必须严格核验确系 `com.apple.SecurityAgent`**（主动调用 `focusSecurityAgentPrompt` 激活系统提权窗口并置入 `AXSecureTextField` 密码框焦点；多重校验 `isSecurityAgent || isSecPromptReady`，解决状态栏 LSUIElement 应用点击测试或后台触发时 SecurityAgent 未被标记为前台应用导致的拦截）。如果检测不到系统提权弹窗，坚决拒绝模拟按键。
 9. **外设即插即用与热插拔自愈 (USB Hotplug & Device Discovery)**：
    - 监听 `AVCaptureDevice.wasConnectedNotification` 与 `wasDisconnectedNotification`，并配合每秒硬件状态心跳探测；
    - 保证用户在应用启动之后随时插入或拔出摄像头时，系统能在 300ms 内自动识别、重置硬件到 RGB 就绪状态并刷新菜单状态，严禁要求用户手动杀死进程重启。

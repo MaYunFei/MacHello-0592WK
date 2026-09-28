@@ -56,7 +56,7 @@ This project has been extensively tested, tuned, and verified on real production
 
 - 🛡️ **Universal macOS Face ID Integration**:
   - **Terminal `sudo`**: Replaces manual password entry with Windows Hello-grade infrared face authentication.
-  - **Admin Elevation Prompts**: Authenticates system password prompt dialogs automatically via Face ID.
+  - **Admin Elevation Prompts**: Authenticates system password prompt dialogs automatically via Face ID. Auto-focuses and activates SecurityAgent password input fields to eliminate synthetic key drops or focus mismatch.
   - **Apple Keychain Secure Storage**: Credentials are encrypted using macOS native Keychain Services.
   - **Haptic & Audio Feedback**: Plays a pleasant Face ID recognition chime on success.
 

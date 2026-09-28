@@ -469,8 +469,20 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", "do shell script \"echo 恭喜！MacHello Face ID 自动认证成功\" with administrator privileges"]
+            let pipe = Pipe()
+            p.standardOutput = pipe
             try? p.run()
             p.waitUntilExit()
+            if p.terminationStatus == 0 {
+                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !out.isEmpty {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello Face ID",
+                        subtitle: loc("Admin Elevation Succeeded", "管理员提权认证成功"),
+                        body: out
+                    )
+                }
+            }
         }
     }
 
