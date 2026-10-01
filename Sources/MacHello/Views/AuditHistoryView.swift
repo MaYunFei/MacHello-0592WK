@@ -132,7 +132,8 @@ public struct AuditHistoryView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 220)
+                .labelsHidden()
+                .frame(width: 230)
             }
 
             Button(loc("Done", "完成")) {

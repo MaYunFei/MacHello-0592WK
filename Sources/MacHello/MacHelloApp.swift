@@ -128,7 +128,7 @@ struct MacHelloApp: App {
                     set: { _ in service.toggleRespectMediaPlayback() }
                 ))
 
-                Menu(loc("Idle Lock Timeout: \(Int(service.absenceTimeout))s", "无操作锁屏等待时长: \(Int(service.absenceTimeout)) 秒")) {
+                Menu(idleLockTimeoutTitle) {
                     let timeouts: [(TimeInterval, String)] = [
                         (15, loc("15 seconds (Quick test)", "15 秒 (测试快速体验)")),
                         (30, loc("30 seconds (Recommended test)", "30 秒 (测试推荐)")),
@@ -351,5 +351,20 @@ struct MacHelloApp: App {
             .keyboardShortcut("q")
         }
         .menuBarExtraStyle(.menu)
+    }
+
+    private var idleLockTimeoutTitle: String {
+        let sec = Int(service.absenceTimeout)
+        if sec < 60 {
+            return loc("Idle Lock Timeout: \(sec)s", "无操作锁屏等待时长: \(sec) 秒")
+        } else if sec % 60 == 0 {
+            let mins = sec / 60
+            let enUnit = mins == 1 ? "1 minute" : "\(mins) minutes"
+            return loc("Idle Lock Timeout: \(enUnit)", "无操作锁屏等待时长: \(mins) 分钟")
+        } else {
+            let mins = sec / 60
+            let rem = sec % 60
+            return loc("Idle Lock Timeout: \(mins)m \(rem)s", "无操作锁屏等待时长: \(mins) 分 \(rem) 秒")
+        }
     }
 }
