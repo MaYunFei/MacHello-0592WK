@@ -19,32 +19,63 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
     var preferIR: Bool = true
 
     func authenticate() -> Bool {
+        // 0. 解析当前真实用户家目录与应用偏好设置（解决 sudo 提权下进程属主为 root 导致路径偏移与配置读取失败的问题）
+        var homeDir = FileManager.default.homeDirectoryForCurrentUser
+        if let sudoUser = ProcessInfo.processInfo.environment["SUDO_USER"],
+           let pw = getpwnam(sudoUser) {
+            homeDir = URL(fileURLWithPath: String(cString: pw.pointee.pw_dir))
+        }
+
+        var isNetworkMode = false
+        var serverURL = "http://192.168.66.5:8765"
+
+        let plistURL = homeDir.appendingPathComponent("Library/Preferences/com.machello.app.plist")
+        if let plistData = try? Data(contentsOf: plistURL),
+           let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any] {
+            isNetworkMode = plist["com.machello.isNetworkModeEnabled"] as? Bool ?? false
+            if let url = plist["com.machello.linuxServerURL"] as? String, !url.isEmpty {
+                serverURL = url
+            }
+        } else {
+            let appDefaults = UserDefaults(suiteName: "com.machello.app") ?? UserDefaults.standard
+            isNetworkMode = appDefaults.bool(forKey: "com.machello.isNetworkModeEnabled")
+            if let url = appDefaults.string(forKey: "com.machello.linuxServerURL"), !url.isEmpty {
+                serverURL = url
+            }
+        }
+
+        if isNetworkMode {
+            cameraService.isNetworkMode = true
+            cameraService.networkServerURL = serverURL
+        }
+
         guard faceDb.isEnrolled, let profile = faceDb.load() else {
             fputs("[MacHello] No enrolled face profile found. Please enroll via Menu or MacHelloEnroll.\n", stderr)
             return false
         }
 
-        // 1. 权限预检：解决首次在此终端使用时弹窗等待用户点击而导致的“超时”问题
-        let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
-        if authStatus == .notDetermined {
-            fputs("[MacHello] First time running in this terminal, please allow camera access...\n", stderr)
-            fflush(stderr)
-            let authSema = DispatchSemaphore(value: 0)
-            var accessGranted = false
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                accessGranted = granted
-                authSema.signal()
-            }
-            // 给予用户充裕时间（最多 30 秒）点击确认
-            _ = authSema.wait(timeout: .now() + 30.0)
+        // 1. 本机摄像头模式下的权限预检（网络模式无需请求本地摄像头授权）
+        if !isNetworkMode {
+            let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
+            if authStatus == .notDetermined {
+                fputs("[MacHello] First time running in this terminal, please allow camera access...\n", stderr)
+                fflush(stderr)
+                let authSema = DispatchSemaphore(value: 0)
+                var accessGranted = false
+                AVCaptureDevice.requestAccess(for: .video) { granted in
+                    accessGranted = granted
+                    authSema.signal()
+                }
+                _ = authSema.wait(timeout: .now() + 30.0)
 
-            guard accessGranted else {
-                fputs("[MacHello] Camera permission denied. Allow in System Settings -> Privacy & Security -> Camera.\n", stderr)
+                guard accessGranted else {
+                    fputs("[MacHello] Camera permission denied. Allow in System Settings -> Privacy & Security -> Camera.\n", stderr)
+                    return false
+                }
+            } else if authStatus == .denied || authStatus == .restricted {
+                fputs("[MacHello] Camera access denied. Allow in System Settings -> Privacy & Security -> Camera.\n", stderr)
                 return false
             }
-        } else if authStatus == .denied || authStatus == .restricted {
-            fputs("[MacHello] Camera access denied. Allow in System Settings -> Privacy & Security -> Camera.\n", stderr)
-            return false
         }
 
         // 确保退出时恢复 RGB，保护红外硬件
@@ -53,14 +84,18 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
         }
 
         let isHardwareConnected = irController.isConnected
-        let useIR = preferIR && isHardwareConnected
+        let useIR = isNetworkMode || (preferIR && isHardwareConnected)
 
         fputs("[MacHello] Verifying face...", stderr)
         fflush(stderr)
 
+        cameraService.delegate = self
+
         do {
             if useIR {
-                _ = irController.setMode(.ir)
+                if !isNetworkMode {
+                    _ = irController.setMode(.ir)
+                }
                 try cameraService.start(mode: .ir)
             } else {
                 try cameraService.start(mode: .rgb)
@@ -69,8 +104,6 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
             fputs("\n[MacHello] Failed to start camera: \(error.localizedDescription)\n", stderr)
             return false
         }
-
-        cameraService.delegate = self
 
         // 2. 超时定时器（权限已具备，此时正式开始人脸识别计时）
         let timeoutResult = sema.wait(timeout: .now() + timeoutSeconds)
@@ -93,7 +126,7 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
 
     private func cleanup() {
         cameraService.stop()
-        if irController.isConnected {
+        if !cameraService.isNetworkMode && irController.isConnected {
             irController.resetToRGB()
         }
     }
@@ -115,39 +148,61 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         if isIR {
-            if frameCount % 2 == 0 && frameCount >= 2 {
+            if cameraService.isNetworkMode {
+                // 局域网模式：直接基于远程红外流进行机主特征核验与抓拍留存
                 let faces = extractor.extract(from: pixelBuffer)
                 for face in faces {
                     let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
                     if match.matched {
-                        self.lastLitPixelBuffer = pixelBuffer
-                        self.pendingMatch = (match.highestScore, face.boundingBox)
-                        break
+                        AuthAuditLogger.shared.recordAuth(
+                            pixelBuffer: pixelBuffer,
+                            reason: "terminal_sudo",
+                            score: match.highestScore,
+                            success: true
+                        )
+                        lock.lock()
+                        isAuthenticated = true
+                        isFinished = true
+                        lock.unlock()
+                        sema.signal()
+                        return
                     }
                 }
-            } else if let lit = lastLitPixelBuffer, let pending = pendingMatch {
-                let liveness = AmbientSubtractionProcessor.shared.verifyLiveness(
-                    lit: lit,
-                    ambient: pixelBuffer,
-                    faceBoundingBox: pending.box
-                )
-
-                if liveness.isLive {
-                    AuthAuditLogger.shared.recordAuth(
-                        pixelBuffer: lit,
-                        reason: "terminal_sudo",
-                        score: pending.score,
-                        success: true
+            } else {
+                if frameCount % 2 == 0 && frameCount >= 2 {
+                    let faces = extractor.extract(from: pixelBuffer)
+                    for face in faces {
+                        let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
+                        if match.matched {
+                            self.lastLitPixelBuffer = pixelBuffer
+                            self.pendingMatch = (match.highestScore, face.boundingBox)
+                            break
+                        }
+                    }
+                } else if let lit = lastLitPixelBuffer, let pending = pendingMatch {
+                    let liveness = AmbientSubtractionProcessor.shared.verifyLiveness(
+                        lit: lit,
+                        ambient: pixelBuffer,
+                        faceBoundingBox: pending.box
                     )
-                    lock.lock()
-                    isAuthenticated = true
-                    isFinished = true
-                    lock.unlock()
-                    sema.signal()
-                    return
-                } else {
-                    lastLitPixelBuffer = nil
-                    pendingMatch = nil
+
+                    if liveness.isLive {
+                        AuthAuditLogger.shared.recordAuth(
+                            pixelBuffer: lit,
+                            reason: "terminal_sudo",
+                            score: pending.score,
+                            success: true
+                        )
+                        lock.lock()
+                        isAuthenticated = true
+                        isFinished = true
+                        lock.unlock()
+                        sema.signal()
+                        return
+                    } else {
+                        lastLitPixelBuffer = nil
+                        pendingMatch = nil
+                    }
                 }
             }
         } else {

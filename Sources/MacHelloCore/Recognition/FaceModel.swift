@@ -38,7 +38,11 @@ public final class FaceDatabase {
     private let cacheLock = NSLock()
 
     public init() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        var home = FileManager.default.homeDirectoryForCurrentUser
+        if let sudoUser = ProcessInfo.processInfo.environment["SUDO_USER"],
+           let pw = getpwnam(sudoUser) {
+            home = URL(fileURLWithPath: String(cString: pw.pointee.pw_dir))
+        }
         let dir = home.appendingPathComponent(".machello", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.storageURL = dir.appendingPathComponent("faces.json")

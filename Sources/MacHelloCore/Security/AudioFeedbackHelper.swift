@@ -18,4 +18,11 @@ public final class AudioFeedbackHelper {
             self?.successSound?.play()
         }
     }
+
+    /// 播放 Face ID 认证失败/超时提示音
+    public func playFailure() {
+        DispatchQueue.main.async {
+            NSSound.beep()
+        }
+    }
 }

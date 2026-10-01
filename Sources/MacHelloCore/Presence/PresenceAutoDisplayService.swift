@@ -341,8 +341,11 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             // 遵循 Windows Hello 规范：人脸感应仅负责点亮屏幕，严禁越权直接模拟密码解锁桌面。
             // 屏幕亮起后由 AutoAuthManager 统一启动 850nm 红外相机进行活体 Face ID 解锁与抓拍留存。
         } else if AutoAuthManager.shared.isScreenLocked() {
-            // 若当前处于锁屏状态，触发安全的红外 Face ID 解锁流程
-            AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
+            // 若当前处于锁屏状态，触发安全的红外 Face ID 解锁流程 (严加 4 秒防抖与防并发保护)
+            let elapsed = Date().timeIntervalSince(AutoAuthManager.shared.lastAuthSuccessTime)
+            if elapsed >= 4.0 && !AutoAuthManager.shared.isAuthActive {
+                AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
+            }
             emitStateChange()
         } else if changed {
             emitStateChange()
@@ -364,7 +367,10 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             emitStateChange()
         } else {
             if AutoAuthManager.shared.isScreenLocked() {
-                AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
+                let elapsed = Date().timeIntervalSince(AutoAuthManager.shared.lastAuthSuccessTime)
+                if elapsed >= 4.0 && !AutoAuthManager.shared.isAuthActive {
+                    AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
+                }
             }
             if changed {
                 emitStateChange()
@@ -448,9 +454,12 @@ public final class PresenceAutoDisplayService: NSObject, CameraCaptureDelegate, 
             pulseCycleCounter = 0
             emitStateChange()
         } else {
-            // 如果屏幕当前正处于锁定界面 (例如快捷键 Cmd+Ctrl+Q 锁定)，触发红外 Face ID 解锁流程
+            // 如果屏幕当前正处于锁定界面 (例如快捷键 Cmd+Ctrl+Q 锁定)，触发红外 Face ID 解锁流程 (严加 4 秒防抖与防并发保护)
             if AutoAuthManager.shared.isScreenLocked() {
-                AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
+                let elapsed = Date().timeIntervalSince(AutoAuthManager.shared.lastAuthSuccessTime)
+                if elapsed >= 4.0 && !AutoAuthManager.shared.isAuthActive {
+                    AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .lockScreen)
+                }
             }
             if changed {
                 emitStateChange()

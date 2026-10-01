@@ -7,6 +7,15 @@ import CIOKitHelper
 public enum AuthReason {
     case adminPrompt
     case lockScreen
+    case manualFill
+
+    public var logReasonString: String {
+        switch self {
+        case .adminPrompt: return "admin_prompt"
+        case .lockScreen: return "lockscreen"
+        case .manualFill: return "manual_fill"
+        }
+    }
 }
 
 public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
@@ -15,6 +24,19 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     private let defaultsKeyAppAuth = "com.machello.isAppAuthEnabled"
     private let defaultsKeyLockScreenUnlock = "com.machello.isLockScreenUnlockEnabled"
     private let defaultsKeyAudioFeedback = "com.machello.isAudioFeedbackEnabled"
+    private let defaultsKeyAdminPromptAutoConfirm = "com.machello.isAdminPromptAutoConfirm"
+
+    public var isAdminPromptAutoConfirm: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeyAdminPromptAutoConfirm) == nil {
+                return false // 默认安全模式：自动填入密码，由机主手动敲回车确认
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeyAdminPromptAutoConfirm)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyAdminPromptAutoConfirm)
+        }
+    }
 
     public var isAppAuthEnabled: Bool {
         get {
@@ -71,11 +93,14 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
     private let authQueue = DispatchQueue(label: "com.machello.autoauth.queue")
     private var isAuthenticating = false
+    public var isAuthActive: Bool { return isAuthenticating }
     private var currentReason: AuthReason = .adminPrompt
     private var authFrameCount = 0
-    private var lastAuthSuccessTime: Date = .distantPast
+    public private(set) var lastAuthSuccessTime: Date = .distantPast
     private var lastAttemptPixelBuffer: CVPixelBuffer?
     private var highestFailedScore: Float = 0.0
+    private var currentSessionUUID: UUID = UUID()
+    private var timeoutWorkItem: DispatchWorkItem?
 
     private override init() {
         super.init()
@@ -123,11 +148,13 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard isScreenLocked() else { return }
 
         let now = Date()
-        guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
+        guard now.timeIntervalSince(lastAuthSuccessTime) >= 4.0 else { return }
 
         print("[AutoAuth] 屏幕唤醒且处于锁定状态，触发 Face ID 自动解锁...")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            self?.triggerFaceAuthForPrompt(reason: .lockScreen)
+            guard let self = self else { return }
+            guard Date().timeIntervalSince(self.lastAuthSuccessTime) >= 4.0 else { return }
+            self.triggerFaceAuthForPrompt(reason: .lockScreen)
         }
     }
 
@@ -143,15 +170,16 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard isLockScreenUnlockEnabled else { return }
         guard keychain.hasPassword() else { return }
 
-        // 防抖：2秒内不重复触发
+        // 防抖：4秒内不重复触发
         let now = Date()
-        guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
+        guard now.timeIntervalSince(lastAuthSuccessTime) >= 4.0 else { return }
 
         print("[AutoAuth] 检测到系统进入锁屏状态，等待系统锁屏动效落地 (1.2s)...")
         // 关键：macOS 锁屏切换动画耗时约 800ms~1000ms，期间 loginwindow 不接收按键事件
         // 等待 1.2 秒动效彻底落定后，再开启红外核验，避免按键事件丢失！
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self = self else { return }
+            guard Date().timeIntervalSince(self.lastAuthSuccessTime) >= 4.0 else { return }
             if self.isScreenLocked() {
                 self.triggerFaceAuthForPrompt(reason: .lockScreen)
             }
@@ -180,57 +208,137 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         authQueue.async { [weak self] in
             guard let self = self else { return }
             guard !self.isAuthenticating else { return }
-            guard self.irController.isConnected else {
-                print("[AutoAuth] 摄像头已拔出或未连接，跳过自动核验")
+            guard !self.isDiagnosticRunning else {
+                print("[AutoAuth] 硬件诊断测试正在运行，跳过自动核验")
+                return
+            }
+            guard !FaceEnrollmentService.shared.isEnrolling else {
+                print("[AutoAuth] 面容录入向导正在进行，跳过自动核验")
+                return
+            }
+            if reason == .adminPrompt && !self.isAppAuthEnabled {
+                print("[AutoAuth] 应用管理员弹窗自动认证已禁用，跳过自动核验")
+                return
+            }
+            if reason == .lockScreen {
+                guard self.isLockScreenUnlockEnabled else {
+                    print("[AutoAuth] 锁屏自动解锁已禁用，跳过自动核验")
+                    return
+                }
+                guard self.isScreenLocked() else {
+                    NSLog("[AutoAuth] 屏幕当前未处于锁定状态，跳过锁屏解锁")
+                    return
+                }
+                let elapsed = Date().timeIntervalSince(self.lastAuthSuccessTime)
+                guard elapsed >= 4.0 else {
+                    NSLog("[AutoAuth] 距离上次认证成功仅 %.1fs (< 4.0s)，防抖跳过锁屏核验", elapsed)
+                    return
+                }
+            }
+            let isCameraConnected = self.cameraService.isNetworkMode ? LinuxPresenceClient.shared.isConnected : self.irController.isConnected
+            guard isCameraConnected else {
+                NSLog("[AutoAuth] 摄像头硬件离线或网络服务未就绪，跳过自动核验")
+                if reason == .manualFill {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello",
+                        body: "摄像头硬件离线或网络服务未就绪，无法核验",
+                        force: true
+                    )
+                }
                 return
             }
             guard self.keychain.hasPassword() else {
-                print("[AutoAuth] 钥匙串中未保存密码，跳过自动填入")
+                NSLog("[AutoAuth] 钥匙串中未保存密码，跳过自动填入")
+                if reason == .manualFill {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello",
+                        body: "钥匙串未保存密码，请先在菜单中设置密码",
+                        force: true
+                    )
+                }
                 return
             }
             guard self.faceDb.isEnrolled else {
-                print("[AutoAuth] 尚未录入面容，跳过自动填入")
+                NSLog("[AutoAuth] 尚未录入面容，跳过自动填入")
+                if reason == .manualFill {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello",
+                        body: "尚未录入面容，请先在菜单中录入面容 ID",
+                        force: true
+                    )
+                }
                 return
             }
 
+            let sessionID = UUID()
+            self.currentSessionUUID = sessionID
             self.isAuthenticating = true
             self.currentReason = reason
             self.authFrameCount = 0
             self.lastAttemptPixelBuffer = nil
             self.highestFailedScore = 0.0
-            print("[AutoAuth] 触发 Face ID (\(reason == .lockScreen ? "锁屏解锁" : "管理员弹窗"))，启动 850nm 红外夜视人脸核验...")
+            NSLog("[AutoAuth] 触发 Face ID (%@) [Session: %@]，启动 850nm 红外夜视人脸核验...", reason == .lockScreen ? "锁屏解锁" : (reason == .manualFill ? "快捷键填密" : "管理员弹窗"), String(sessionID.uuidString.prefix(8)))
+
+            if reason == .manualFill {
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "正在启动红外相机进行 Face ID 面容比对...",
+                    force: true
+                )
+            }
 
             // 1. 点亮 850nm 红外并启动 640x480 YUY2 红外流
-            _ = self.irController.setMode(.ir)
+            if !self.cameraService.isNetworkMode {
+                _ = self.irController.setMode(.ir)
+            }
             self.cameraService.delegate = self
             do {
                 try self.cameraService.start(mode: .ir)
             } catch {
-                print("[AutoAuth] 启动红外相机失败: \(error)")
-                self.irController.resetToRGB()
+                NSLog("[AutoAuth] 启动红外相机失败: %@", error.localizedDescription)
+                if !self.cameraService.isNetworkMode {
+                    self.irController.resetToRGB()
+                }
                 self.isAuthenticating = false
                 return
             }
 
-            // 2. 设置 3.5 秒安全硬超时
-            DispatchQueue.global().asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            // 2. 设置安全硬超时 (局域网网络流预留 6.0 秒供模式切换与网络传输，本机 USB 为 4.0 秒)
+            let timeoutSeconds: Double = self.cameraService.isNetworkMode ? 6.0 : 4.0
+            self.timeoutWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
                 self.authQueue.async {
-                    if self.isAuthenticating {
-                        print("[AutoAuth] 红外核验超时未比对成功，自动复位")
-                        if let failedBuffer = self.lastAttemptPixelBuffer {
-                            let reasonStr = (self.currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
-                            AuthAuditLogger.shared.recordAuth(
-                                pixelBuffer: failedBuffer,
-                                reason: reasonStr,
-                                score: self.highestFailedScore,
-                                success: false
-                            )
+                    guard self.isAuthenticating, self.currentSessionUUID == sessionID else { return }
+                    NSLog("[AutoAuth] 红外核验超时未比对成功，自动复位 (最高分: %.3f, 收到帧数: %d)", self.highestFailedScore, self.authFrameCount)
+                    if self.currentReason == .manualFill {
+                        if self.isAudioFeedbackEnabled {
+                            AudioFeedbackHelper.shared.playFailure()
                         }
-                        self.stopAuth()
+                        let pct = Int(self.highestFailedScore * 100)
+                        let msg = pct > 0 ? "⚠️ 面容比对未通过 (最高相似度: \(pct)%)" : "⚠️ 面容比对超时 (未检测到人脸)"
+                        SystemNotifier.shared.postNotification(
+                            title: "MacHello",
+                            body: msg,
+                            force: true
+                        )
                     }
+                    let reasonStr = self.currentReason.logReasonString
+                    if let failedBuffer = self.lastAttemptPixelBuffer {
+                        AuthAuditLogger.shared.recordAuth(
+                            pixelBuffer: failedBuffer,
+                            reason: reasonStr,
+                            score: self.highestFailedScore,
+                            success: false
+                        )
+                    } else if self.cameraService.isNetworkMode && self.authFrameCount > 0 {
+                        self.captureNetworkSnapshotForAudit(reason: reasonStr, score: self.highestFailedScore, success: false)
+                    }
+                    self.stopAuth()
                 }
             }
+            self.timeoutWorkItem = workItem
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds, execute: workItem)
         }
     }
 
@@ -296,7 +404,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         lastAttemptPixelBuffer = pixelBuffer
 
         // 微软 Windows Hello 规范：偶数帧为 850nm 满血补光帧，奇数帧为环境光无补光帧
-        if isIR {
+        if isIR || cameraService.isNetworkMode {
             if cameraService.isNetworkMode {
                 // 局域网模式：直接基于远程红外流进行机主特征核验与抓拍留存
                 let faces = extractor.extract(from: pixelBuffer)
@@ -304,7 +412,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                     let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
                     highestFailedScore = max(highestFailedScore, match.highestScore)
                     if match.matched {
-                        let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                        let reasonStr = self.currentReason.logReasonString
                         print("[AutoAuth] ✓ 局域网红外人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
                         AuthAuditLogger.shared.recordAuth(
                             pixelBuffer: pixelBuffer,
@@ -339,7 +447,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                     )
 
                     if liveness.isLive {
-                        let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                        let reasonStr = self.currentReason.logReasonString
                         print("[AutoAuth] ✓ 机主红外人脸核验成功 (相似度: \(String(format: "%.2f", pending.score)), 频闪活体调制深度: \(String(format: "%.1f%%", liveness.strobeDelta * 100)))")
                         AuthAuditLogger.shared.recordAuth(
                             pixelBuffer: lit,
@@ -352,8 +460,8 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                         onAuthSucceeded()
                         return
                     } else {
-                        print("[AutoAuth] ⚠️ 活体防伪拦截：无 850nm 频闪脉冲响应 (Delta: \(String(format: "%.3f", liveness.strobeDelta)))，拒绝虚假屏幕/照片攻击！")
-                        let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                        NSLog("[AutoAuth] ⚠️ 活体防伪拦截：无 850nm 频闪脉冲响应 (Delta: %.3f)，拒绝虚假屏幕/照片攻击！", liveness.strobeDelta)
+                        let reasonStr = "\(self.currentReason.logReasonString)_liveness"
                         AuthAuditLogger.shared.recordAuth(
                             pixelBuffer: lit,
                             reason: reasonStr,
@@ -372,7 +480,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                 let match = faceDb.match(embedding: face.embedding, threshold: 0.58)
                 highestFailedScore = max(highestFailedScore, match.highestScore)
                 if match.matched {
-                    let reasonStr = (currentReason == .lockScreen) ? "lockscreen" : "admin_prompt"
+                    let reasonStr = self.currentReason.logReasonString
                     print("[AutoAuth] ✓ 机主全彩人脸核验成功 (相似度: \(String(format: "%.2f", match.highestScore)))")
                     AuthAuditLogger.shared.recordAuth(
                         pixelBuffer: pixelBuffer,
@@ -389,6 +497,9 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
     private func onAuthSucceeded() {
         let reason = currentReason
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        currentSessionUUID = UUID()
         isAuthenticating = false
         lastAttemptPixelBuffer = nil
         lastAuthSuccessTime = Date()
@@ -396,13 +507,32 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         // 停止相机并安全复位硬件
         stopAuth()
 
-        // 播放提示音
+        // 优先从钥匙串读取解密密码
+        guard let password = keychain.fetchPassword() else {
+            NSLog("[AutoAuth] ❌ 人脸比对核验成功，但无法从钥匙串解密机主密码！")
+            if isAudioFeedbackEnabled {
+                AudioFeedbackHelper.shared.playFailure()
+            }
+            SystemNotifier.shared.postNotification(
+                title: "MacHello",
+                body: "❌ 钥匙串解密失败！请在菜单中点击「🔑 验证 / 授权钥匙串访问权限」",
+                force: true
+            )
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "MacHello 钥匙串访问未授权"
+                alert.informativeText = "人脸核验成功，但无法从系统钥匙串读取密码。\n\n请点击 MacHello 菜单栏中的「🔑 验证 / 授权钥匙串访问权限」进行一次性授权。"
+                alert.alertStyle = .warning
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
+            return
+        }
+
+        // 成功读取到机主密码后，再播放成功提示音！
         if isAudioFeedbackEnabled {
             audio.playSuccess()
         }
-
-        // 从钥匙串读取解密密码
-        guard let password = keychain.fetchPassword() else { return }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             guard let self = self else { return }
@@ -425,31 +555,70 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                 }
 
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
+            } else if reason == .manualFill {
+                // 全局快捷键刷脸填密模式：填充密码框（不自动按回车，安全受控）
+                NSLog("[AutoAuth] ✓ 全局快捷键刷脸核验成功，自动填入当前密码框...")
+                self.accessibility.fillActivePasswordField(password: password, autoConfirm: false)
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "✓ Face ID 认证成功，密码已填入！",
+                    force: true
+                )
             } else {
                 // 【绝对安全铁律 2】：管理员弹窗模式下，确系 SecurityAgent 提权框处于活跃状态！
-                // 解决：MacHello 作为菜单栏 LSUIElement 应用，点击测试或后台触发时，
-                // SecurityAgent 浮动窗口处于顶级 Layer 1000 但可能未被系统标记为 frontmostApplication。
-                // 故先显式激活并聚焦 SecurityAgent 密码输入框：
-                let isSecPromptReady = self.accessibility.focusSecurityAgentPrompt()
-                usleep(80000) // 80ms 等待 WindowServer 完成焦点与图层置换
+                // 解决：macOS 14/15 启用 Secure Event Input 导致底层 CGEvent 键盘模拟事件被 WindowServer 静默拦截丢弃的问题。
+                // 优先通过系统授权的 Accessibility API 直接填入密码：
+                let autoConfirm = self.isAdminPromptAutoConfirm
+                NSLog("[AutoAuth] ✓ 管理员弹窗机主核验成功，填入密码 (确认模式: %@)...", autoConfirm ? "极速直接确认" : "需手动按回车确认")
+                let filled = self.accessibility.fillAndConfirmSecurityAgent(password: password, autoConfirm: autoConfirm)
+                if !filled {
+                    // 若 AX 直接写入未完成，回退到原有焦点激活与键盘事件模拟机制
+                    NSLog("[AutoAuth] ⚠️ AX 直接写入未完成，回退到焦点激活与键盘事件模拟...")
+                    let isSecPromptReady = self.accessibility.focusSecurityAgentPrompt()
+                    usleep(80000)
 
-                let frontmost = NSWorkspace.shared.frontmostApplication
-                let isSecurityAgent = (frontmost?.bundleIdentifier == "com.apple.SecurityAgent" || frontmost?.localizedName == "SecurityAgent")
-                guard isSecurityAgent || isSecPromptReady else {
-                    print("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的 SecurityAgent 提权弹窗（当前前台是: \(frontmost?.localizedName ?? "空")），绝对禁止输入密码！")
-                    return
+                    let frontmost = NSWorkspace.shared.frontmostApplication
+                    let isSecurityAgent = (frontmost?.bundleIdentifier == "com.apple.SecurityAgent" || frontmost?.localizedName == "SecurityAgent")
+                    if isSecurityAgent || isSecPromptReady {
+                        self.accessibility.simulateKeystrokes(password, pressEnter: autoConfirm)
+                        SystemNotifier.shared.postNotification(
+                            title: "MacHello",
+                            body: "✓ 管理员弹窗 Face ID 认证成功，密码已填入！",
+                            force: true
+                        )
+                    } else {
+                        NSLog("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的 SecurityAgent 提权弹窗，取消操作")
+                    }
+                } else {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello",
+                        body: "✓ 管理员弹窗 Face ID 认证成功，密码已填入！",
+                        force: true
+                    )
                 }
-
-                print("[AutoAuth] ✓ 管理员弹窗机主核验成功，自动键入密码提权...")
-                self.accessibility.simulateKeystrokes(password, pressEnter: true)
             }
         }
     }
 
     private func stopAuth() {
+        timeoutWorkItem?.cancel()
+        timeoutWorkItem = nil
+        currentSessionUUID = UUID()
         isAuthenticating = false
         lastAttemptPixelBuffer = nil
         cameraService.stop()
-        irController.resetToRGB()
+        if !cameraService.isNetworkMode {
+            irController.resetToRGB()
+        }
+    }
+
+    private func captureNetworkSnapshotForAudit(reason: String, score: Float, success: Bool) {
+        let serverURL = cameraService.networkServerURL
+        guard let url = URL(string: "\(serverURL)/api/snapshot") else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            if let data = data {
+                AuthAuditLogger.shared.recordAuth(data: data, reason: reason, score: score, success: success)
+            }
+        }.resume()
     }
 }

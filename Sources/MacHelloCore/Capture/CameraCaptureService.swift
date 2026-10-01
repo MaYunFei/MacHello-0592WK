@@ -86,7 +86,12 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
     }
 
     public func start(mode: CaptureMode = .rgb) throws {
-        guard !isRunning else { return }
+        if isRunning {
+            if currentMode == mode {
+                return
+            }
+            stop()
+        }
         self.currentMode = mode
 
         // 统一判断数据源模式：
@@ -95,7 +100,16 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
             guard let streamURL = URL(string: "\(networkServerURL)/stream") else {
                 throw NSError(domain: "MacHello", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid Linux server URL"])
             }
-            LinuxPresenceClient.shared.setIRMode(isIR: (mode == .ir))
+            if mode == .ir {
+                let sem = DispatchSemaphore(value: 0)
+                LinuxPresenceClient.shared.setIRMode(isIR: true) { _ in
+                    sem.signal()
+                }
+                _ = sem.wait(timeout: .now() + 2.0)
+                usleep(150000) // 150ms 等待 Linux 物理红外 CMOS 曝光稳定
+            } else {
+                LinuxPresenceClient.shared.setIRMode(isIR: false)
+            }
             networkReceiver.start(url: streamURL)
             isRunning = true
             return
@@ -243,10 +257,9 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
                 }
 
                 if let sampleBuffer = self.makeSampleBuffer(from: cgImage) {
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self, let owner = self.owner, self.isRunning else { return }
-                        owner.delegate?.cameraCaptureService(owner, didOutput: sampleBuffer, isIR: owner.currentMode == .ir)
-                    }
+                    guard let owner = self.owner, self.isRunning else { continue }
+                    let isFrameIR = (owner.currentMode == .ir) || (cgImage.width == 640 && cgImage.height == 480)
+                    owner.delegate?.cameraCaptureService(owner, didOutput: sampleBuffer, isIR: isFrameIR)
                 }
             }
 

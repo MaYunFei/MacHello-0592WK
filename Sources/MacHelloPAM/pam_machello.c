@@ -9,6 +9,7 @@
 #include <security/pam_modules.h>
 
 #define PAM_MACHHELLO_VERSION "1.0.0"
+#define DEFAULT_AUTH_BIN_APP "/Applications/MacHello.app/Contents/Resources/machello-auth"
 #define DEFAULT_AUTH_BIN_1 "/usr/local/bin/machello-auth"
 #define DEFAULT_AUTH_BIN_2 "/opt/machello/bin/machello-auth"
 
@@ -23,7 +24,12 @@ static const char *resolve_auth_binary(int argc, const char **argv) {
         }
     }
 
-    // 2. 检查标准系统安装路径
+    // 2. 优先使用已安装至 /Applications 的 MacHello.app 内置核心，实现随 App 自动升级
+    if (access(DEFAULT_AUTH_BIN_APP, X_OK) == 0) {
+        return DEFAULT_AUTH_BIN_APP;
+    }
+
+    // 3. 检查标准系统安装路径
     if (access(DEFAULT_AUTH_BIN_1, X_OK) == 0) {
         return DEFAULT_AUTH_BIN_1;
     }

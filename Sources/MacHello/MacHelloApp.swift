@@ -8,6 +8,11 @@ struct MacHelloApp: App {
     @ObservedObject private var lang = LanguageManager.shared
 
     init() {
+        // 设置点击通知横幅直接打开通行抓拍历史
+        SystemNotifier.shared.onNotificationClicked = {
+            AuditHistoryWindowController.shared.showWindow()
+        }
+
         // 首次打开或未确认硬件时，自动弹出硬件自检与设备确认向导
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             if !UserDefaults.standard.bool(forKey: "com.machello.hardwareVerified") {
@@ -190,11 +195,63 @@ struct MacHelloApp: App {
                 set: { _ in service.togglePAMInstallation() }
             ))
 
+            Toggle(loc("Hotkey Auto-Fill Password (\(service.currentHotkeyDisplay))", "快捷键刷脸填充密码 (\(service.currentHotkeyDisplay))"), isOn: Binding(
+                get: { service.isGlobalHotkeyFillEnabled },
+                set: { _ in service.toggleGlobalHotkeyFill() }
+            ))
+
+            if service.isGlobalHotkeyFillEnabled {
+                Menu(loc("Shortcut: \(service.currentHotkeyDisplay)", "填密快捷键: \(service.currentHotkeyDisplay)")) {
+                    ForEach(GlobalHotkeyManager.presets) { preset in
+                        Button {
+                            service.setHotkey(keyCode: preset.keyCode, modifiers: preset.modifiers)
+                        } label: {
+                            HStack {
+                                Text(preset.title)
+                                if service.currentHotkeyKeyCode == preset.keyCode && service.currentHotkeyModifiers == preset.modifiers {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Button(loc("Record Custom Shortcut...", "录制自定义快捷键...")) {
+                        HotkeyRecorderWindowController.shared.showWindow()
+                    }
+                }
+            }
+
             Menu(loc("Full Face ID Auto-Auth Settings", "全场景 Face ID 自动免密授权")) {
                 Toggle(loc("Admin Prompt Face ID Auto-Auth", "应用管理员弹窗 Face ID 自动认证"), isOn: Binding(
                     get: { service.isAppAuthEnabled },
                     set: { _ in service.toggleAppAuth() }
                 ))
+
+                if service.isAppAuthEnabled {
+                    Menu(service.isAdminPromptAutoConfirm
+                        ? loc("Elevation: Fast (Auto-Confirm)", "提权确认方式: 极速模式 (直接确认)")
+                        : loc("Elevation: Safe (Manual Return)", "提权确认方式: 安全模式 (手动按回车)")) {
+                        Button {
+                            if !service.isAdminPromptAutoConfirm { service.toggleAdminPromptAutoConfirm() }
+                        } label: {
+                            HStack {
+                                Text(loc("Fast Mode (Fill & Auto-Confirm)", "极速模式 (自动填入并直接确认)"))
+                                if service.isAdminPromptAutoConfirm { Image(systemName: "checkmark") }
+                            }
+                        }
+
+                        Button {
+                            if service.isAdminPromptAutoConfirm { service.toggleAdminPromptAutoConfirm() }
+                        } label: {
+                            HStack {
+                                Text(loc("Safe Mode (Fill Only, Manual Return)", "安全模式 (自动填入密码，手动按回车)"))
+                                if !service.isAdminPromptAutoConfirm { Image(systemName: "checkmark") }
+                            }
+                        }
+                    }
+                }
 
                 Toggle(loc("Lock Screen Auto-Unlock on Wake", "锁屏感应唤醒自动解锁进桌面"), isOn: Binding(
                     get: { service.isLockScreenUnlockEnabled },
@@ -214,6 +271,9 @@ struct MacHelloApp: App {
 
                 if service.hasStoredPassword {
                     Text(loc("Keychain Password: Saved ✓", "钥匙串密码：已安全保存 ✓"))
+                    Button(loc("Verify / Authorize Keychain Access", "🔑 验证 / 授权钥匙串访问权限")) {
+                        service.verifyKeychainAccess()
+                    }
                     Button(loc("Update Keychain Password", "更新钥匙串密码")) {
                         service.promptToStorePassword()
                     }
@@ -238,9 +298,12 @@ struct MacHelloApp: App {
 
                 Divider()
 
-                Button(loc("Test Admin Prompt (Face ID)", "测试管理员提权弹窗 (Face ID)")) {
+                Button(service.isPromptTestRunning
+                    ? loc("Testing Admin Prompt...", "正在测试管理员提权弹窗...")
+                    : loc("Test Admin Prompt (Face ID)", "测试管理员提权弹窗 (Face ID)")) {
                     service.triggerAdminPromptTest()
                 }
+                .disabled(service.isPromptTestRunning)
 
                 Button(loc("View Access & Snapshot History", "查看通行抓拍与识别历史")) {
                     AuditHistoryWindowController.shared.showWindow()

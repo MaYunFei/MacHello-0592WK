@@ -33,6 +33,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isAudioFeedbackEnabled: Bool = true
     @Published public var hasStoredPassword: Bool = false
     @Published public var isAccessibilityTrusted: Bool = false
+    @Published public var isPromptTestRunning: Bool = false
+    @Published public var isAdminPromptAutoConfirm: Bool = false
+    @Published public var isGlobalHotkeyFillEnabled: Bool = true
+    @Published public var currentHotkeyDisplay: String = "⌘\\"
+    @Published public var currentHotkeyKeyCode: UInt32 = GlobalHotkeyManager.defaultKeyCode
+    @Published public var currentHotkeyModifiers: UInt32 = GlobalHotkeyManager.defaultModifiers
 
     // 局域网 Linux 服务端模式
     @Published public var isNetworkModeEnabled: Bool = false
@@ -61,6 +67,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isMediaPreventingSleep = (self.activeMediaAppName != nil)
         self.absenceTimeout = autoDisplayService.absenceTimeout
         self.isDisplayAsleep = displayManager.isDisplayAsleep
+        self.isAdminPromptAutoConfirm = AutoAuthManager.shared.isAdminPromptAutoConfirm
         self.isNetworkModeEnabled = autoDisplayService.isNetworkModeEnabled
         self.linuxServerURL = linuxClient.serverURLString
         self.isLinuxConnected = linuxClient.isConnected
@@ -70,6 +77,16 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isDeviceConnected = self.isNetworkModeEnabled ? linuxClient.isConnected : irController.isConnected
         self.isCameraInverted = UserDefaults.standard.bool(forKey: "com.machello.isCameraInverted")
         self.cameraService.isCameraInverted = self.isCameraInverted
+
+        // 全局快捷键刷脸填密
+        self.isGlobalHotkeyFillEnabled = GlobalHotkeyManager.shared.isEnabled
+        self.currentHotkeyDisplay = GlobalHotkeyManager.shared.currentDisplay
+        self.currentHotkeyKeyCode = GlobalHotkeyManager.shared.currentKeyCode
+        self.currentHotkeyModifiers = GlobalHotkeyManager.shared.currentModifiers
+        GlobalHotkeyManager.shared.onHotKeyTriggered = { [weak self] in
+            self?.triggerManualPasswordFill()
+        }
+        GlobalHotkeyManager.shared.start()
 
         // 彻底同步底层驱动的数据源状态 (Samba 模式与本机 USB 直插模式解耦)
         self.cameraService.isNetworkMode = self.isNetworkModeEnabled
@@ -422,6 +439,73 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isAudioFeedbackEnabled = newState
     }
 
+    public func toggleAdminPromptAutoConfirm() {
+        let newState = !isAdminPromptAutoConfirm
+        AutoAuthManager.shared.isAdminPromptAutoConfirm = newState
+        self.isAdminPromptAutoConfirm = newState
+    }
+
+    public func toggleGlobalHotkeyFill() {
+        let newState = !isGlobalHotkeyFillEnabled
+        GlobalHotkeyManager.shared.isEnabled = newState
+        self.isGlobalHotkeyFillEnabled = newState
+    }
+
+    public func setHotkey(keyCode: UInt32, modifiers: UInt32) {
+        GlobalHotkeyManager.shared.setHotkey(keyCode: keyCode, modifiers: modifiers)
+        self.currentHotkeyDisplay = GlobalHotkeyManager.shared.currentDisplay
+        self.currentHotkeyKeyCode = keyCode
+        self.currentHotkeyModifiers = modifiers
+    }
+
+    public func resetHotkeyToDefault() {
+        GlobalHotkeyManager.shared.resetToDefault()
+        self.currentHotkeyDisplay = GlobalHotkeyManager.shared.currentDisplay
+        self.currentHotkeyKeyCode = GlobalHotkeyManager.shared.currentKeyCode
+        self.currentHotkeyModifiers = GlobalHotkeyManager.shared.currentModifiers
+    }
+
+    /// 全局快捷键触发 Face ID 刷脸并自动填入当前密码框
+    public func triggerManualPasswordFill() {
+        guard isDeviceConnected || isNetworkModeEnabled else {
+            SystemNotifier.shared.postNotification(
+                title: "MacHello",
+                body: "摄像头未连接或网络服务离线，无法进行人脸核验",
+                force: true
+            )
+            return
+        }
+
+        guard FaceDatabase.shared.isEnrolled else {
+            SystemNotifier.shared.postNotification(
+                title: "MacHello",
+                body: "尚未录入机主面容，请先在菜单中设置面容 ID",
+                force: true
+            )
+            return
+        }
+
+        guard hasStoredPassword else {
+            SystemNotifier.shared.postNotification(
+                title: "MacHello",
+                body: "钥匙串未保存密码，请先在菜单中设置解锁密码",
+                force: true
+            )
+            return
+        }
+
+        guard isAccessibilityTrusted else {
+            SystemNotifier.shared.postNotification(
+                title: "MacHello",
+                body: "缺少辅助功能权限，无法模拟填密，请前往系统设置授权",
+                force: true
+            )
+            return
+        }
+
+        AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .manualFill)
+    }
+
     /// 单独试听 Face ID 认证成功提示音
     public func playTestAudio() {
         AudioFeedbackHelper.shared.playSuccess()
@@ -450,8 +534,40 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
                 if !pw.isEmpty {
                     KeychainHelper.shared.savePassword(pw)
                     self.refreshStatus()
+
+                    // 保存后立即进行一次前台主动验证，引导系统立即弹出钥匙串授权框，防止后续后台静默拦截
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        self.verifyKeychainAccess()
+                    }
                 }
             }
+        }
+    }
+
+    /// 主动在前台验证并授权 macOS 系统钥匙串读取权限
+    public func verifyKeychainAccess() {
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            let result = KeychainHelper.shared.verifyKeychainAccess()
+            let alert = NSAlert()
+            if result.success {
+                alert.messageText = loc("Keychain Access Authorized ✓", "钥匙串访问授权有效 ✓")
+                alert.informativeText = loc(
+                    "MacHello has successfully read and decrypted the stored password (\(result.passwordLength) characters) from the system Keychain.\n\nFace ID auto-fill is ready to use!",
+                    "MacHello 已成功从系统安全钥匙串中读取并解密机主密码 (长度: \(result.passwordLength) 位)。\n\n现在您可以随时使用全局快捷键在任意光标输入框中自动填入密码！"
+                )
+                alert.alertStyle = .informational
+            } else {
+                alert.messageText = loc("Keychain Authorization Needed", "需要钥匙串访问授权")
+                alert.informativeText = loc(
+                    "Failed to read password from Keychain:\n\(result.message)\n\nIf macOS prompts with a keychain dialog, please enter your Mac password and click 'Always Allow'.",
+                    "未能读取钥匙串密码：\n\(result.message)\n\n如果屏幕上出现了系统钥匙串授权对话框，请输入当前 Mac 登录密码并务必点击「总是允许」。"
+                )
+                alert.alertStyle = .warning
+            }
+            alert.addButton(withTitle: loc("OK", "好"))
+            alert.runModal()
+            self.refreshStatus()
         }
     }
 
@@ -465,23 +581,98 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     }
 
     public func triggerAdminPromptTest() {
+        guard !isPromptTestRunning else { return }
+
+        // 1. 严格检查各前置条件并给出针对性的明确提示与引导
+        guard isAppAuthEnabled else {
+            showSimpleAlert(
+                title: loc("Admin Auto-Auth Disabled", "管理员自动认证未开启"),
+                message: loc("Please turn on 'Admin Prompt Face ID Auto-Auth' in the menu first.", "请先在菜单中开启「应用管理员弹窗 Face ID 自动认证」开关。")
+            )
+            return
+        }
+
+        guard isDeviceConnected || isNetworkModeEnabled else {
+            showSimpleAlert(
+                title: loc("Camera Disconnected", "摄像头未连接"),
+                message: loc("Infrared camera hardware is disconnected or offline. Please check connection.", "红外摄像头硬件未连接或处于离线状态，请检查设备连接后再试。")
+            )
+            return
+        }
+
+        guard FaceDatabase.shared.isEnrolled else {
+            showSimpleAlert(
+                title: loc("Face ID Not Set Up", "尚未设置面容 ID"),
+                message: loc("Please enroll your face in 'Set Up Face ID' before running this test.", "尚未录入面容数据，请先点击菜单中的「设置面容 ID」完成录入。")
+            )
+            return
+        }
+
+        guard hasStoredPassword else {
+            DispatchQueue.main.async { [weak self] in
+                let alert = NSAlert()
+                alert.messageText = loc("Password Not Set in Keychain", "尚未保存解锁密码")
+                alert.informativeText = loc("Face ID elevation requires your account password stored securely in Keychain. Would you like to set it now?", "Face ID 自动提权需要在钥匙串中安全保存当前账户的登录/管理员密码。是否立即设置？")
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: loc("Set Password Now", "立即设置密码"))
+                alert.addButton(withTitle: loc("Cancel", "取消"))
+                if alert.runModal() == .alertFirstButtonReturn {
+                    self?.promptToStorePassword()
+                }
+            }
+            return
+        }
+
+        guard isAccessibilityTrusted else {
+            DispatchQueue.main.async { [weak self] in
+                let alert = NSAlert()
+                alert.messageText = loc("Accessibility Permission Required", "需要辅助功能权限")
+                alert.informativeText = loc("MacHello requires Accessibility permission to automatically focus and type your password. Click OK to open System Settings.", "MacHello 需要辅助功能权限以自动定位并键入密码。点击「打开系统设置」前往授权。")
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: loc("Open System Settings", "打开系统设置"))
+                alert.addButton(withTitle: loc("Cancel", "取消"))
+                if alert.runModal() == .alertFirstButtonReturn {
+                    self?.openAccessibilitySettings()
+                }
+            }
+            return
+        }
+
+        // 2. 所有前置条件满足，标记运行状态并异步启动测试
+        isPromptTestRunning = true
+
+        // 双保险：在弹窗唤起后主动通知 AutoAuthManager 准备核验，避免部分 macOS 系统省略激活通知
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .adminPrompt)
+        }
+
         DispatchQueue.global().async {
+            defer {
+                DispatchQueue.main.async {
+                    self.isPromptTestRunning = false
+                }
+            }
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             p.arguments = ["-e", "do shell script \"echo 恭喜！MacHello Face ID 自动认证成功\" with administrator privileges"]
             let pipe = Pipe()
             p.standardOutput = pipe
-            try? p.run()
-            p.waitUntilExit()
-            if p.terminationStatus == 0 {
-                let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !out.isEmpty {
-                    SystemNotifier.shared.postNotification(
-                        title: "MacHello Face ID",
-                        subtitle: loc("Admin Elevation Succeeded", "管理员提权认证成功"),
-                        body: out
-                    )
+
+            do {
+                try p.run()
+                p.waitUntilExit()
+                if p.terminationStatus == 0 {
+                    let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if !out.isEmpty {
+                        SystemNotifier.shared.postNotification(
+                            title: "MacHello Face ID",
+                            subtitle: loc("Admin Elevation Succeeded", "管理员提权认证成功"),
+                            body: out
+                        )
+                    }
                 }
+            } catch {
+                print("[MacHello] 启动管理员提权测试进程失败: \(error)")
             }
         }
     }

@@ -136,4 +136,35 @@ final class MacHelloTests: XCTestCase {
         // 恢复默认
         service.respectMediaPlayback = true
     }
+
+    func testGlobalHotkeyManager() {
+        let hotkey = GlobalHotkeyManager.shared
+        let originalState = hotkey.isEnabled
+        let originalCode = hotkey.currentKeyCode
+        let originalMods = hotkey.currentModifiers
+        defer {
+            hotkey.isEnabled = originalState
+            hotkey.setHotkey(keyCode: originalCode, modifiers: originalMods)
+        }
+
+        hotkey.isEnabled = true
+        XCTAssertTrue(hotkey.isEnabled)
+        hotkey.register()
+
+        // Test custom hotkey setting
+        hotkey.setHotkey(keyCode: 35, modifiers: 256 | 2048) // ⌥⌘P
+        XCTAssertEqual(hotkey.currentKeyCode, 35)
+        XCTAssertEqual(hotkey.currentDisplay, "⌥⌘P")
+
+        // Test reset to default (⌘\)
+        hotkey.resetToDefault()
+        XCTAssertEqual(hotkey.currentKeyCode, GlobalHotkeyManager.defaultKeyCode)
+        XCTAssertEqual(hotkey.currentDisplay, "⌘\\")
+
+        hotkey.isEnabled = false
+        XCTAssertFalse(hotkey.isEnabled)
+
+        hotkey.isEnabled = true
+        XCTAssertTrue(hotkey.isEnabled)
+    }
 }

@@ -61,7 +61,8 @@
 | **电源与屏幕管理** | **`pmset displaysleepnow` + `IOPMAssertionDeclareUserActivity`** | 纯显示屏黑屏/亮屏，不影响主机 CPU 和后台进程 |
 | **键鼠活跃感知** | **`CGEventSource.secondsSinceLastEventType`** | 零开销获取系统键鼠最后活动时间，打字期间关停摄像头熄灯 |
 | **媒体观影探测** | **`IOPMCopyAssertionsStatus`** | 感知 YouTube/视频/会议电源断言，观影时相机静默、屏幕常亮 |
-| **全场景免密授权** | **macOS Keychain + `cghidEventTap`** | 密码加密存入系统钥匙串，红外验证通过后秒级填入弹窗与锁屏 |
+| **全局快捷键填密** | **Carbon `RegisterEventHotKey` + `TransientType` 剪贴板 + `⌘V`** | 纯后台零抢焦点触发，1Password 级瞬时隐私注入，自动还原剪贴板 |
+| **全场景免密授权** | **macOS Keychain + `cghidEventTap` + 原生 PAM (`pam_machello`)** | 密码加密存入系统钥匙串，红外验证通过后秒级填入弹窗与锁屏，双模支持 sudo |
 
 ---
 
