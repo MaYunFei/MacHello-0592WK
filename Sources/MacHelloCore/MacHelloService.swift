@@ -122,6 +122,9 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
             }
         }
 
+        // 启动时自动检查并清理已被卸载应用的孤儿凭据 (被动卸载自动清理)
+        _ = AppCredentialManager.shared.cleanOrphanedAppCredentials()
+
         // 监听系统级摄像头设备热插拔（即插即用）
         NotificationCenter.default.addObserver(
             forName: LanguageManager.languageDidChangeNotification,
@@ -574,6 +577,50 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public func deleteStoredPassword() {
         KeychainHelper.shared.deletePassword()
         refreshStatus()
+    }
+
+    /// 请求执行彻底卸载与数据抹除流程 (方案 A: 应用内一键抹除)
+    public func requestCompleteUninstall() {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = loc("Uninstall MacHello & Erase All Data?", "彻底卸载 MacHello 并抹除所有数据？")
+            alert.informativeText = loc(
+                "Warning: This operation will permanently erase:\n" +
+                "1. All face biometric vectors (~/.machello/faces.json)\n" +
+                "2. All capture & diagnostic snapshots (~/.machello/history/)\n" +
+                "3. Mac login password & third-party app credentials in Keychain\n" +
+                "4. Terminal Sudo PAM elevation configuration\n" +
+                "5. Login item auto-start & application preferences\n\n" +
+                "This action cannot be undone. Are you sure you want to proceed?",
+                "⚠️ 警告：此操作将永久彻底抹除以下所有数据与系统配置：\n" +
+                "1. 机主人脸生物特征向量库 (~/.machello/faces.json)\n" +
+                "2. 通行抓拍历史照片与硬件诊断缓存 (~/.machello/history/)\n" +
+                "3. 系统钥匙串中的 Mac 登录密码及所有第三方应用专属凭据 (Bitwarden 等)\n" +
+                "4. 终端 Sudo PAM 免密提权系统配置\n" +
+                "5. 开机登录自启动项与所有偏好设置\n\n" +
+                "此操作不可逆，抹除后将在访达中为您定位 MacHello.app 以便移入废纸篓。是否确认彻底抹除？"
+            )
+            alert.alertStyle = .critical
+            alert.addButton(withTitle: loc("Erase All Data & Uninstall", "彻底抹除并准备卸载"))
+            alert.addButton(withTitle: loc("Cancel", "取消"))
+
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                UninstallManager.shared.executeCompleteWipeAndPrepareUninstall { _ in
+                    let finishedAlert = NSAlert()
+                    finishedAlert.messageText = loc("Data Safely Erased", "所有数据已彻底安全抹除 ✓")
+                    finishedAlert.informativeText = loc(
+                        "All biometric models, keychain credentials, and configurations have been permanently wiped.\n\nMacHello.app has been revealed in Finder. You can now drag it to Trash to finish uninstallation.",
+                        "所有面容数据、钥匙串密码与系统配置均已彻底物理抹除。\n\nMacHello.app 已在访达中高亮选中，现在您可以将其直接拖入废纸篓完成卸载。"
+                    )
+                    finishedAlert.alertStyle = .informational
+                    finishedAlert.addButton(withTitle: loc("Quit Application", "退出程序"))
+                    finishedAlert.runModal()
+                    NSApp.terminate(nil)
+                }
+            }
+        }
     }
 
     public func openAccessibilitySettings() {

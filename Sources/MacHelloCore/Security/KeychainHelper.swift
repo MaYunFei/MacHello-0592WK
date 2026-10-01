@@ -5,6 +5,7 @@ public final class KeychainHelper {
     public static let shared = KeychainHelper()
 
     private let service = "com.machello.MacHello"
+    private let serviceCustomApp = "com.machello.customApp"
     private var account: String {
         return NSUserName()
     }
@@ -134,5 +135,107 @@ public final class KeychainHelper {
 
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
+    }
+
+    // MARK: - 第三方应用专属凭据管理 (例如 Bitwarden, 1Password 等)
+
+    /// 保存第三方应用专属密码进系统钥匙串 (以 Bundle ID 为 Account 隔离)
+    @discardableResult
+    public func saveAppPassword(bundleId: String, password: String) -> Bool {
+        guard !bundleId.isEmpty, let data = password.data(using: .utf8) else { return false }
+
+        // 先清理该 Bundle ID 的旧凭据
+        deleteAppPassword(bundleId: bundleId)
+
+        var access: SecAccess?
+        SecAccessCreate("MacHello" as CFString, nil, &access)
+
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceCustomApp,
+            kSecAttrAccount as String: bundleId,
+            kSecAttrLabel as String: "MacHello 专属应用凭据 (\(bundleId))",
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        if let access = access {
+            query[kSecAttrAccess as String] = access
+        }
+
+        let status = SecItemAdd(query as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+
+    /// 从钥匙串读取第三方应用专属密码
+    public func fetchAppPassword(bundleId: String) -> String? {
+        guard !bundleId.isEmpty else { return nil }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceCustomApp,
+            kSecAttrAccount as String: bundleId,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status != errSecSuccess {
+            return nil
+        }
+        guard let data = result as? Data, let pw = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return pw
+    }
+
+    /// 检查钥匙串中是否已保存指定第三方应用的专属密码
+    public func hasAppPassword(bundleId: String) -> Bool {
+        guard !bundleId.isEmpty else { return false }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceCustomApp,
+            kSecAttrAccount as String: bundleId,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        let status = SecItemCopyMatching(query as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+
+    /// 从钥匙串彻底删除指定第三方应用的专属密码
+    @discardableResult
+    public func deleteAppPassword(bundleId: String) -> Bool {
+        guard !bundleId.isEmpty else { return false }
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceCustomApp,
+            kSecAttrAccount as String: bundleId
+        ]
+
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+
+    /// 批量删除所有已知第三方应用的钥匙串凭据
+    public func deleteAllAppPasswords(bundleIds: [String]) {
+        for bid in bundleIds {
+            deleteAppPassword(bundleId: bid)
+        }
+
+        // 兜底：尝试以 service 为通配符清空 customApp 类目
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceCustomApp
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// 彻底抹除 MacHello 在系统钥匙串中的所有数据 (包括 Mac 登录密码与所有第三方应用密码)
+    public func deleteAllCredentials(customBundleIds: [String] = []) {
+        deletePassword()
+        deleteAllAppPasswords(bundleIds: customBundleIds)
     }
 }

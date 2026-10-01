@@ -159,6 +159,18 @@
    - **严禁单纯垂直镜像 (Single Axis Flip)**：单纯 Y 轴镜像会导致左右手性反转，面容录入向导时“向左微转头”和“向右微转头”会彻底颠倒；
    - **必须执行严格 2D 刚体 180° 旋转 (Rigid 180° Euclidean Rotation)**：同时翻转 X 轴与 Y 轴（`translateBy(w, h)` + `scaleBy(-1.0, -1.0)` 或原生硬件 `conn.videoRotationAngle = 180.0`），保证画面手性不变、左右/上下完全符合真实物理空间，确保 Apple Vision 的人脸姿态（`yaw` 偏航角与 `pitch` 俯仰角）100% 精准匹配；
    - **局域网快照自动适配**：在席感应静态快照解析管道自动传入 `CGImagePropertyOrientation.down`，实现锁屏全天候全自动识别。
+14. **通用第三方应用凭据与生命周期管理规范 (Universal App Credentials & Lifecycle Standards - CRITICAL)**：
+   - **Bundle ID 物理钥匙串隔离**：针对 Bitwarden、1Password 等第三方应用，凭据以应用的 `bundleIdentifier` 为唯一键保存在 `com.machello.customApp` Keychain 命名空间中，与 Mac 系统登录密码物理隔离；
+   - **上下文智能分流**：全局快捷键（`⌘\`）触发时通过 Accessibility API 毫秒级探测前台活跃应用，自动匹配专属凭据与自动回车确认；非专属场景优雅回退至 Mac 登录密码；
+   - **App Grid 卡片墙直选规范**：添加应用凭据界面统一采用高分辨率 App 图标网格卡片墙（`LazyVGrid`），支持一键点击选中与访达浏览兜底，杜绝传统下拉菜单的时序截断与交互冗余；
+   - **主动删除与被动卸载自愈机制 (Zero Orphaned Credentials)**：
+     - 主动删除：在 UI 中移除应用规则时，立即调用 `SecItemDelete` 物理抹除该应用在 Keychain 中的密码记录；
+     - 被动卸载：每次打开管理面板或应用启动时，自动通过 `NSWorkspace.urlForApplication` 与文件系统校验宿主 App 存在性，若检测到宿主应用已被卸载或移入废纸篓，自动静默清除其在钥匙串中的残留密码，杜绝孤儿数据泄漏。
+15. **全系统数据彻底抹除与干净卸载规范 (Complete Data Erase & Uninstall Standards - CRITICAL)**：
+   - macOS 默认将 App 移入废纸篓不会清理 Keychain、`~/.machello` 与 PAM 系统配置；
+   - 本项目必须同时提供两套 100% 物理级干净卸载方案：
+     - **方案 A (菜单内置)**：状态栏菜单提供「🧹 彻底卸载 MacHello 并抹除所有数据...」，经严格二次确认后原子化注销开机自启、还原 PAM 提权配置、抹除全部 Keychain 密码、永久物理粉碎 `~/.machello/` 目录并退出；
+     - **方案 B (独立脚本)**：提供独立终端清理脚本 `scripts/uninstall-all.sh`，一键全自动停止进程、恢复 PAM、清空钥匙串并清理应用包。
 
 ---
 
@@ -167,13 +179,29 @@
 ```text
 MacHello-0592WK/
 ├── AGENT.md                 # 本文件：AI Agent 规范与硬件真值协议
-├── README.md                # 面向用户的开源文档
+├── README.md                # 面向用户的开源文档 (英文)
+├── README_zh.md             # 面向用户的开源文档 (简体中文)
 ├── Package.swift            # 纯 Swift 现代工程配置 (SPM)
+├── scripts/                 # 打包、诊断、PAM 安装及全系统卸载抹除脚本
+│   ├── install-pam.sh
+│   ├── uninstall-pam.sh
+│   ├── uninstall-all.sh     # 方案 B: 一键彻底卸载与数据抹除脚本
+│   └── package-app.sh       # 标准 macOS 应用程序打包脚本
 └── Sources/
     ├── MacHello/            # App 入口与菜单栏界面 (SwiftUI / AppKit)
     │   ├── MacHelloApp.swift
-    │   ├── Controllers/     # 窗口控制器 (向导/录入/自检/审计历史)
-    │   └── Views/           # SwiftUI 界面 (录入环形向导/双目自检/通行审计历史)
+    │   ├── Controllers/     # 窗口控制器 (向导/录入/自检/审计历史/应用专属凭据)
+    │   │   ├── AppCredentialsWindowController.swift
+    │   │   ├── AuditHistoryWindowController.swift
+    │   │   ├── DiagnosticWindowController.swift
+    │   │   ├── EnrollmentWindowController.swift
+    │   │   └── HotkeyRecorderWindowController.swift
+    │   └── Views/           # SwiftUI 界面 (录入环形向导/双目自检/通行审计历史/应用专属凭据)
+    │       ├── AppCredentialsView.swift
+    │       ├── AuditHistoryView.swift
+    │       ├── FaceEnrollmentView.swift
+    │       ├── HardwareDiagnosticView.swift
+    │       └── HotkeyRecorderView.swift
     ├── MacHelloCore/        # 核心逻辑
     │   ├── Hardware/        # IOKit USB 5步握手
     │   ├── Capture/         # AVFoundation 摄像头采集 (RGB 720P / IR 640x480)
@@ -181,6 +209,14 @@ MacHello-0592WK/
     │   ├── Input/           # 键鼠空闲时间感知 (CGEventSource)
     │   ├── Presence/        # 人体存在感应 (HPD 走开息屏/机主亮屏/即达即关)
     │   ├── Recognition/     # Apple Vision 人脸特征向量、环境光差分与15Hz频闪活体防伪
-    │   └── Security/        # 全场景 Face ID (钥匙串/辅助功能按键/提示音/通行审计中心)
+    │   └── Security/        # 全场景 Face ID (钥匙串/应用专属凭据/卸载管理/辅助功能按键/通行审计中心)
+    │       ├── AccessibilityHelper.swift
+    │       ├── AppCredentialManager.swift
+    │       ├── AudioFeedbackHelper.swift
+    │       ├── AuthAuditLogger.swift
+    │       ├── AutoAuthManager.swift
+    │       ├── GlobalHotkeyManager.swift
+    │       ├── KeychainHelper.swift
+    │       └── UninstallManager.swift
     └── MacHelloPAM/         # PAM 动态链接库模块 (C / Swift)
 ```

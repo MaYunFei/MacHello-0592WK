@@ -55,6 +55,8 @@ cp scripts/install-pam.sh "$RESOURCES_DIR/install-pam.sh"
 chmod 755 "$RESOURCES_DIR/install-pam.sh"
 cp scripts/uninstall-pam.sh "$RESOURCES_DIR/uninstall-pam.sh"
 chmod 755 "$RESOURCES_DIR/uninstall-pam.sh"
+cp scripts/uninstall-all.sh "$RESOURCES_DIR/uninstall-all.sh"
+chmod 755 "$RESOURCES_DIR/uninstall-all.sh"
 cp AppIcon.icns "$RESOURCES_DIR/AppIcon.icns"
 
 # Generate Info.plist

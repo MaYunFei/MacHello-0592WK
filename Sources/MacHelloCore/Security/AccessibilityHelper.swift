@@ -428,4 +428,81 @@ public final class AccessibilityHelper {
         pastePassword(password, autoConfirm: autoConfirm)
         return true
     }
+
+    // MARK: - 前台活跃应用与锁定状态探查
+
+    /// 获取当前处于最前台激活的应用 Bundle ID
+    public func frontmostAppBundleIdentifier() -> String? {
+        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    }
+
+    /// 获取当前处于最前台激活的应用名称
+    public func frontmostAppName() -> String? {
+        let app = NSWorkspace.shared.frontmostApplication
+        return app?.localizedName ?? app?.bundleIdentifier
+    }
+
+    /// 检查指定前台应用当前是否处于锁定状态（或包含未完成输入的密码输入框 AXSecureTextField）
+    public func isFrontmostAppLockedOrHasSecureField(bundleId: String) -> Bool {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication,
+              frontApp.bundleIdentifier?.lowercased() == bundleId.lowercased() else {
+            return false
+        }
+
+        let appElement = AXUIElementCreateApplication(frontApp.processIdentifier)
+
+        // 递归检查窗口中是否存在 AXSecureTextField
+        func containsSecureField(_ el: AXUIElement, depth: Int = 0) -> Bool {
+            guard depth < 6 else { return false }
+
+            var subrole: AnyObject?
+            AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+            if (subrole as? String) == "AXSecureTextField" {
+                return true
+            }
+
+            var role: AnyObject?
+            AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+            if (role as? String) == "AXTextField" {
+                // 部分 Web/Electron 应用中密码框的 title / description 包含 password 或 pin
+                var title: AnyObject?
+                AXUIElementCopyAttributeValue(el, kAXTitleAttribute as CFString, &title)
+                var desc: AnyObject?
+                AXUIElementCopyAttributeValue(el, kAXDescriptionAttribute as CFString, &desc)
+                let text = "\((title as? String) ?? "") \((desc as? String) ?? "")".lowercased()
+                if text.contains("password") || text.contains("pin") || text.contains("密码") || text.contains("unlock") {
+                    return true
+                }
+            }
+
+            var children: AnyObject?
+            AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &children)
+            if let childrenList = children as? [AXUIElement] {
+                for child in childrenList {
+                    if containsSecureField(child, depth: depth + 1) {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        var focusedWin: AnyObject?
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focusedWin) == .success,
+           let fw = focusedWin {
+            if containsSecureField(fw as! AXUIElement) {
+                return true
+            }
+        }
+
+        var mainWin: AnyObject?
+        if AXUIElementCopyAttributeValue(appElement, kAXMainWindowAttribute as CFString, &mainWin) == .success,
+           let mw = mainWin {
+            if containsSecureField(mw as! AXUIElement) {
+                return true
+            }
+        }
+
+        return false
+    }
 }

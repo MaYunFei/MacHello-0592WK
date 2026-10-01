@@ -73,6 +73,15 @@ This project has been extensively tested, tuned, and verified on real production
   - 📜 **100% Comprehensive Audit History**:
     - High-precision timestamp, similarity score, and NIR snapshot recorded for every attempt (passes, failures, timeouts, and anti-spoofing intercepts).
   - 🔑 **Apple Keychain Secure Storage**: Credentials encrypted via macOS native Keychain Services.
+  - 🧩 **Universal App-Specific Credentials (Bitwarden, 1Password, etc.)**:
+    - **Per-App Keychain Isolation**: Securely store custom unlock credentials (master passwords or quick PINs) for any third-party app in dedicated Keychain slots (`com.machello.customApp.<bundleId>`).
+    - **Context-Aware Global Hotkey (⌘\)**: When pressing the hotkey in Bitwarden or other registered apps, MacHello automatically detects the active frontmost app via Accessibility API, retrieves its specific credential, and simulates Return to unlock. Defaults back to system login password in all other fields.
+    - **Auto-Unlock on Focus**: Optionally triggers Face ID when switching to locked apps (`Cmd+Tab`) and auto-enters the vault upon verification.
+    - **Instant Running App Picker & Finder Browser**: Easily select from running GUI apps with app icons, or browse any `.app` in `/Applications`.
+    - **Active Deletion & Passive Uninstallation Self-Healing**: Actively removing an app rule immediately purges its Keychain entry. If you uninstall a configured app from your Mac, MacHello automatically detects its absence and cleans up orphaned Keychain credentials, leaving zero residual data.
+  - 🧹 **Complete Uninstallation & Full-System Data Erase (Dual-Option Guarantee)**:
+    - **Option A (In-App Menu)**: Select *“🧹 Uninstall MacHello & Erase All Data...”* at the bottom of the status bar menu. After confirmation, MacHello automatically unregisters login items, restores PAM configs, erases all Keychain credentials, permanently shreds `~/.machello` (biometric vectors & snapshot history), clears preferences, reveals `MacHello.app` in Finder for dragging to Trash, and terminates.
+    - **Option B (Terminal Script)**: Run `sudo ./scripts/uninstall-all.sh` to cleanly stop all processes, restore PAM, delete Keychain items, and purge all directories with zero leftover clutter.
   - 🔊 **Haptic & Audio Feedback**: Plays a pleasant Face ID recognition chime on success.
 
 - 🧪 **Full-Pipeline Hardware Diagnostic Wizard**:
@@ -137,6 +146,14 @@ To unlock `sudo` in Terminal using Face ID:
 ```bash
 # Install the native PAM module and sudo configuration
 sudo ./scripts/install-pam.sh
+```
+
+### Option 3: Clean Complete Uninstallation (Option B)
+
+To completely uninstall MacHello and erase all biometric data, Keychain items, and PAM configuration:
+
+```bash
+sudo ./scripts/uninstall-all.sh
 ```
 
 Now run any `sudo` command in Terminal to experience instant infrared face unlock:

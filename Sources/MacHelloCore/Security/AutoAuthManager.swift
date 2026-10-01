@@ -4,16 +4,18 @@ import AVFoundation
 import CoreMedia
 import CIOKitHelper
 
-public enum AuthReason {
+public enum AuthReason: Equatable {
     case adminPrompt
     case lockScreen
     case manualFill
+    case customApp(bundleId: String, appName: String, autoConfirm: Bool)
 
     public var logReasonString: String {
         switch self {
         case .adminPrompt: return "admin_prompt"
         case .lockScreen: return "lockscreen"
         case .manualFill: return "manual_fill"
+        case .customApp(let bid, _, _): return "app_\(bid)"
         }
     }
 }
@@ -187,18 +189,32 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     }
 
     private func checkAndTriggerSecurityAgent(from notification: Notification) {
-        guard isAppAuthEnabled else { return }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
 
         let bid = app.bundleIdentifier ?? ""
         let name = app.localizedName ?? ""
-        if bid == "com.apple.SecurityAgent" || name == "SecurityAgent" {
+        if (bid == "com.apple.SecurityAgent" || name == "SecurityAgent") && isAppAuthEnabled {
             // 防抖：2秒内不重复触发
             let now = Date()
             guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                 self?.triggerFaceAuthForPrompt(reason: .adminPrompt)
+            }
+            return
+        }
+
+        // 检查是否命中已配置「激活时自动刷脸解锁」的第三方专属应用 (例如 Bitwarden)
+        if let rule = AppCredentialManager.shared.rule(for: bid), rule.isAutoUnlockEnabled {
+            let now = Date()
+            guard now.timeIntervalSince(lastAuthSuccessTime) > 3.0 else { return }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self = self else { return }
+                // 仅在前台窗口确系包含未完成输入的密码框或处于锁定状态时才触发，100% 杜绝误触
+                if self.accessibility.isFrontmostAppLockedOrHasSecureField(bundleId: rule.bundleId) {
+                    self.triggerFaceAuthForPrompt(reason: .customApp(bundleId: rule.bundleId, appName: rule.appName, autoConfirm: rule.autoConfirm))
+                }
             }
         }
     }
@@ -235,6 +251,17 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                     return
                 }
             }
+
+            // 智能上下文分流：若是快捷键触发，优先探查前台是否为已配置专属密码的应用 (如 Bitwarden)
+            var targetReason = reason
+            if reason == .manualFill,
+               let frontBid = self.accessibility.frontmostAppBundleIdentifier(),
+               let rule = AppCredentialManager.shared.rule(for: frontBid),
+               self.keychain.hasAppPassword(bundleId: rule.bundleId) {
+                targetReason = .customApp(bundleId: rule.bundleId, appName: rule.appName, autoConfirm: rule.autoConfirm)
+                NSLog("[AutoAuth] 识别到当前前台应用为专属应用: %@ (%@)，切换为专属凭据模式", rule.appName, rule.bundleId)
+            }
+
             let isCameraConnected = self.cameraService.isNetworkMode ? LinuxPresenceClient.shared.isConnected : self.irController.isConnected
             guard isCameraConnected else {
                 NSLog("[AutoAuth] 摄像头硬件离线或网络服务未就绪，跳过自动核验")
@@ -247,12 +274,23 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                 }
                 return
             }
-            guard self.keychain.hasPassword() else {
-                NSLog("[AutoAuth] 钥匙串中未保存密码，跳过自动填入")
+
+            // 检查对应钥匙串密码是否存在
+            let hasRequiredPassword: Bool
+            switch targetReason {
+            case .customApp(let bid, _, _):
+                hasRequiredPassword = self.keychain.hasAppPassword(bundleId: bid)
+            default:
+                hasRequiredPassword = self.keychain.hasPassword()
+            }
+
+            guard hasRequiredPassword else {
+                NSLog("[AutoAuth] 钥匙串中未保存对应密码，跳过自动填入")
                 if reason == .manualFill {
+                    let name = self.accessibility.frontmostAppName() ?? "该应用"
                     SystemNotifier.shared.postNotification(
                         title: "MacHello",
-                        body: "钥匙串未保存密码，请先在菜单中设置密码",
+                        body: "钥匙串未保存 \(name) 密码，请先在菜单中设置",
                         force: true
                     )
                 }
@@ -273,11 +311,19 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             let sessionID = UUID()
             self.currentSessionUUID = sessionID
             self.isAuthenticating = true
-            self.currentReason = reason
+            self.currentReason = targetReason
             self.authFrameCount = 0
             self.lastAttemptPixelBuffer = nil
             self.highestFailedScore = 0.0
-            NSLog("[AutoAuth] 触发 Face ID (%@) [Session: %@]，启动 850nm 红外夜视人脸核验...", reason == .lockScreen ? "锁屏解锁" : (reason == .manualFill ? "快捷键填密" : "管理员弹窗"), String(sessionID.uuidString.prefix(8)))
+
+            let reasonDesc: String
+            switch targetReason {
+            case .lockScreen: reasonDesc = "锁屏解锁"
+            case .manualFill: reasonDesc = "快捷键填密"
+            case .adminPrompt: reasonDesc = "管理员弹窗"
+            case .customApp(_, let appName, _): reasonDesc = "\(appName) 专属解锁"
+            }
+            NSLog("[AutoAuth] 触发 Face ID (%@) [Session: %@]，启动 850nm 红外夜视人脸核验...", reasonDesc, String(sessionID.uuidString.prefix(8)))
 
             if reason == .manualFill {
                 SystemNotifier.shared.postNotification(
@@ -507,15 +553,23 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         // 停止相机并安全复位硬件
         stopAuth()
 
-        // 优先从钥匙串读取解密密码
-        guard let password = keychain.fetchPassword() else {
-            NSLog("[AutoAuth] ❌ 人脸比对核验成功，但无法从钥匙串解密机主密码！")
+        // 根据认证场景决定读取 Mac 系统登录密码还是第三方应用专属密码
+        let passwordOpt: String?
+        switch reason {
+        case .customApp(let bid, _, _):
+            passwordOpt = self.keychain.fetchAppPassword(bundleId: bid)
+        default:
+            passwordOpt = self.keychain.fetchPassword()
+        }
+
+        guard let password = passwordOpt else {
+            NSLog("[AutoAuth] ❌ 人脸比对核验成功，但无法从钥匙串解密对应密码！")
             if isAudioFeedbackEnabled {
                 AudioFeedbackHelper.shared.playFailure()
             }
             SystemNotifier.shared.postNotification(
                 title: "MacHello",
-                body: "❌ 钥匙串解密失败！请在菜单中点击「🔑 验证 / 授权钥匙串访问权限」",
+                body: "❌ 钥匙串解密失败！请检查钥匙串授权或重新保存密码",
                 force: true
             )
             DispatchQueue.main.async {
@@ -555,6 +609,14 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                 }
 
                 self.accessibility.simulateKeystrokes(password, pressEnter: true)
+            } else if case .customApp(_, let appName, let autoConfirm) = reason {
+                NSLog("[AutoAuth] ✓ 专属应用 (%@) 刷脸核验成功，自动填入密码 (自动回车: %d)...", appName, autoConfirm)
+                self.accessibility.fillActivePasswordField(password: password, autoConfirm: autoConfirm)
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "✓ Face ID 认证成功，\(appName) 密码已填入！",
+                    force: true
+                )
             } else if reason == .manualFill {
                 // 全局快捷键刷脸填密模式：填充密码框（不自动按回车，安全受控）
                 NSLog("[AutoAuth] ✓ 全局快捷键刷脸核验成功，自动填入当前密码框...")

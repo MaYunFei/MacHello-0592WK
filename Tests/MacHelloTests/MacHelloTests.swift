@@ -167,4 +167,77 @@ final class MacHelloTests: XCTestCase {
         hotkey.isEnabled = true
         XCTAssertTrue(hotkey.isEnabled)
     }
+
+    func testKeychainHelperCustomApp() {
+        let keychain = KeychainHelper.shared
+        let testBundleId = "com.test.machello.app"
+        let testPw = "SuperSecret123!"
+
+        defer {
+            keychain.deleteAppPassword(bundleId: testBundleId)
+        }
+
+        // 1. 保存
+        let saved = keychain.saveAppPassword(bundleId: testBundleId, password: testPw)
+        XCTAssertTrue(saved, "Should save app password to Keychain")
+
+        // 2. 检查存在
+        XCTAssertTrue(keychain.hasAppPassword(bundleId: testBundleId), "Keychain should have the app password")
+
+        // 3. 读取解密
+        let fetched = keychain.fetchAppPassword(bundleId: testBundleId)
+        XCTAssertEqual(fetched, testPw, "Fetched password should match stored password")
+
+        // 4. 删除
+        let deleted = keychain.deleteAppPassword(bundleId: testBundleId)
+        XCTAssertTrue(deleted, "Should delete app password from Keychain")
+        XCTAssertFalse(keychain.hasAppPassword(bundleId: testBundleId), "Password should no longer exist after deletion")
+    }
+
+    func testAppCredentialManager() {
+        let manager = AppCredentialManager.shared
+        let testBundleId = "com.test.bitwarden.mock"
+        let testAppName = "Bitwarden Mock"
+        let testPw = "MockMasterPassword!@#"
+
+        defer {
+            manager.deleteRule(bundleId: testBundleId)
+        }
+
+        // 1. 添加或更新规则
+        let added = manager.addOrUpdateRule(
+            bundleId: testBundleId,
+            appName: testAppName,
+            password: testPw,
+            autoConfirm: true,
+            isAutoUnlockEnabled: false
+        )
+        XCTAssertTrue(added, "Should add rule and save password to Keychain")
+
+        // 2. 验证规则查询
+        let rule = manager.rule(for: testBundleId)
+        XCTAssertNotNil(rule, "Should find rule for bundleId")
+        XCTAssertEqual(rule?.appName, testAppName)
+        XCTAssertTrue(rule?.autoConfirm ?? false)
+        XCTAssertFalse(rule?.isAutoUnlockEnabled ?? true)
+
+        // 3. 验证钥匙串中已存储密码
+        let pw = KeychainHelper.shared.fetchAppPassword(bundleId: testBundleId)
+        XCTAssertEqual(pw, testPw, "Keychain should store the correct app password")
+
+        // 4. 更新配置选项
+        manager.updateRuleOptions(bundleId: testBundleId, autoConfirm: false, isAutoUnlockEnabled: true)
+        let updatedRule = manager.rule(for: testBundleId)
+        XCTAssertFalse(updatedRule?.autoConfirm ?? true)
+        XCTAssertTrue(updatedRule?.isAutoUnlockEnabled ?? false)
+
+        // 5. 校验被动卸载检测 (不存在的应用)
+        let status = manager.checkAppInstalled(bundleId: testBundleId)
+        XCTAssertFalse(status.installed, "Mock app should not be installed on system")
+
+        // 6. 主动删除
+        manager.deleteRule(bundleId: testBundleId)
+        XCTAssertNil(manager.rule(for: testBundleId), "Rule should be removed after deletion")
+        XCTAssertFalse(KeychainHelper.shared.hasAppPassword(bundleId: testBundleId), "Keychain password should be wiped")
+    }
 }

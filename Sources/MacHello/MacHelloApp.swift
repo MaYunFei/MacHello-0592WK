@@ -269,6 +269,12 @@ struct MacHelloApp: App {
 
                 Divider()
 
+                Button(loc("App-Specific Credentials (Bitwarden etc.)...", "🔐 应用专属密码管理 (Bitwarden 等)...")) {
+                    AppCredentialsWindowController.shared.showWindow()
+                }
+
+                Divider()
+
                 if service.hasStoredPassword {
                     Text(loc("Keychain Password: Saved ✓", "钥匙串密码：已安全保存 ✓"))
                     Button(loc("Verify / Authorize Keychain Access", "🔑 验证 / 授权钥匙串访问权限")) {
@@ -339,6 +345,12 @@ struct MacHelloApp: App {
                 } label: {
                     Label(loc("Clear Local Face Data", "清除本地面容数据"), systemImage: "trash")
                 }
+            }
+
+            Button(role: .destructive) {
+                service.requestCompleteUninstall()
+            } label: {
+                Label(loc("Uninstall MacHello & Erase All Data...", "🧹 彻底卸载 MacHello 并抹除所有数据..."), systemImage: "trash.slash")
             }
 
             Button(loc("Quit MacHello", "退出 MacHello")) {
