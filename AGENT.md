@@ -33,7 +33,11 @@
 2. **后台常驻与开机启动**：
    - 使用现代 macOS 原生 `SMAppService.mainApp.register()` 管理开机无感自启。
 3. **自动化打包与无缝热替换开发工作流 (HOT REPLACEMENT WORKFLOW - CRITICAL)**：
-   - 每次代码改动并通过测试（`swift test`）后，打包生成 `.app`；
+   - **本地硬性工作流规则**：每次修改完代码，必须严格遵循闭环流程：
+     1. 运行并通过单元测试：`swift test`；
+     2. 同步更新中英文说明与规范文档（`README.md`、`README_zh.md`、`AGENT.md`）；
+     3. 提交代码变更至 Git 仓库：`git commit`；
+     4. 自动执行打包与本地安装替换：`./scripts/package-app.sh --install`。
    - 必须通过 `./scripts/package-app.sh --install` 完成闭环：**自动平滑退出当前旧版 App 进程（`killall MacHello`） -> 将新 App 安装到 `/Applications/MacHello.app` -> 重新启动新 App (`open /Applications/MacHello.app`)**，确保用户无缝测试最新构建，严禁遗留未安装的构建或要求用户手动操作。
 4. **双部署工作模式架构规范 (DUAL DEPLOYMENT MODES)**：
    - **🔌 本机 USB 直连模式 (Local BLEUnlock Mode)**：
@@ -138,7 +142,7 @@
    - **真锁屏机制**：无操作超时必须调用 `SACLockScreenImmediate()`（调用 macOS `login.framework` 原生接口），确保系统真正且立刻切入 `loginwindow` 锁屏状态，严禁仅调用 `pmset displaysleepnow`（单纯息屏未锁屏会导致按键泄露至桌面应用）；
    - **模拟键入绝对双重核验**：
      - 若为锁屏解锁（`.lockScreen`），**必须在发送按键前严格多重校验 `isScreenLocked() == true`**。一旦检测到当前不在锁屏界面（已处于普通桌面窗口），必须立即熔断、绝对严禁发送任何按键，坚决防止密码被打入终端或聊天对话框；
-     - 若为管理员弹窗提权（`.adminPrompt`），**必须严格核验确系 `com.apple.SecurityAgent`**（主动调用 `focusSecurityAgentPrompt` 激活系统提权窗口并置入 `AXSecureTextField` 密码框焦点；多重校验 `isSecurityAgent || isSecPromptReady`，解决状态栏 LSUIElement 应用点击测试或后台触发时 SecurityAgent 未被标记为前台应用导致的拦截）。如果检测不到系统提权弹窗，坚决拒绝模拟按键。
+     - 若为系统安全/管理员弹窗提权（`.adminPrompt` / `manualFill`），**必须严格核验确系系统安全认证代理**（全面覆盖传统 `com.apple.SecurityAgent` 与现代 macOS 的 `com.apple.LocalAuthentication.UIAgent` / `coreautha`、`LocalAuthenticationRemoteService`，包括 iPhone 镜像启用自动认证、Passkeys、Apple Pay 等系统级安全弹窗）。主动调用 `focusSystemAuthPrompt` 激活系统认证窗口并置入 `AXSecureTextField` 密码框焦点；多重校验 `isSystemAuth || isSecPromptReady`，直接通过 Accessibility API 注入密码，彻底解决 Secure Event Input 导致常规模拟击键与剪贴板 ⌘V 粘贴被系统静默丢弃的问题。如果检测不到任何活跃的系统安全弹窗且无安全输入框，严禁盲目发送按键。
 9. **外设即插即用与热插拔自愈 (USB Hotplug & Device Discovery)**：
    - 监听 `AVCaptureDevice.wasConnectedNotification` 与 `wasDisconnectedNotification`，并配合每秒硬件状态心跳探测；
    - 保证用户在应用启动之后随时插入或拔出摄像头时，系统能在 300ms 内自动识别、重置硬件到 RGB 就绪状态并刷新菜单状态，严禁要求用户手动杀死进程重启。

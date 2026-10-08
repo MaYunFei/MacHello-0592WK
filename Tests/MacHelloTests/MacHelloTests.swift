@@ -240,4 +240,23 @@ final class MacHelloTests: XCTestCase {
         XCTAssertNil(manager.rule(for: testBundleId), "Rule should be removed after deletion")
         XCTAssertFalse(KeychainHelper.shared.hasAppPassword(bundleId: testBundleId), "Keychain password should be wiped")
     }
+
+    func testSystemAuthIdentifierRecognition() {
+        // 1. 传统 SecurityAgent 识别
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.SecurityAgent", processName: "SecurityAgent"))
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.SecurityAgent", processName: nil))
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: nil, processName: "SecurityAgent"))
+
+        // 2. 现代 LocalAuthentication (coreautha / LocalAuthenticationRemoteService) 识别
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.LocalAuthentication.UIAgent", processName: "coreautha"))
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.LocalAuthentication.UIAgent", processName: nil))
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: nil, processName: "coreautha"))
+        XCTAssertTrue(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.LocalAuthenticationRemoteService", processName: "LocalAuthenticationRemoteService (iPhone镜像)"))
+
+        // 3. 普通应用或浏览器应该被排除
+        XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.google.Chrome", processName: "Google Chrome"))
+        XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.Safari", processName: "Safari"))
+        XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.Terminal", processName: "Terminal"))
+        XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: nil, processName: nil))
+    }
 }

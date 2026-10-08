@@ -192,8 +192,8 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
 
         let bid = app.bundleIdentifier ?? ""
-        let name = app.localizedName ?? ""
-        if (bid == "com.apple.SecurityAgent" || name == "SecurityAgent") && isAppAuthEnabled {
+        let isSystemAuth = AccessibilityHelper.isSystemAuthApp(app)
+        if isSystemAuth && isAppAuthEnabled {
             // 防抖：2秒内不重复触发
             let now = Date()
             guard now.timeIntervalSince(lastAuthSuccessTime) > 2.0 else { return }
@@ -627,34 +627,34 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                     force: true
                 )
             } else {
-                // 【绝对安全铁律 2】：管理员弹窗模式下，确系 SecurityAgent 提权框处于活跃状态！
-                // 解决：macOS 14/15 启用 Secure Event Input 导致底层 CGEvent 键盘模拟事件被 WindowServer 静默拦截丢弃的问题。
-                // 优先通过系统授权的 Accessibility API 直接填入密码：
+                // 【绝对安全铁律 2】：系统安全/管理员弹窗模式下，确系安全认证提权框处于活跃状态！
+                // 解决：macOS 14/15/27 启用 Secure Event Input 导致底层 CGEvent 键盘模拟事件被 WindowServer 静默拦截丢弃的问题。
+                // 优先通过系统授权的 Accessibility API 直接填入密码（全面适配 SecurityAgent 与 LocalAuthentication coreautha / RemoteService）：
                 let autoConfirm = self.isAdminPromptAutoConfirm
-                NSLog("[AutoAuth] ✓ 管理员弹窗机主核验成功，填入密码 (确认模式: %@)...", autoConfirm ? "极速直接确认" : "需手动按回车确认")
-                let filled = self.accessibility.fillAndConfirmSecurityAgent(password: password, autoConfirm: autoConfirm)
+                NSLog("[AutoAuth] ✓ 系统安全弹窗机主核验成功，填入密码 (确认模式: %@)...", autoConfirm ? "极速直接确认" : "需手动按回车确认")
+                let filled = self.accessibility.fillAndConfirmSystemAuthPrompt(password: password, autoConfirm: autoConfirm)
                 if !filled {
                     // 若 AX 直接写入未完成，回退到原有焦点激活与键盘事件模拟机制
                     NSLog("[AutoAuth] ⚠️ AX 直接写入未完成，回退到焦点激活与键盘事件模拟...")
-                    let isSecPromptReady = self.accessibility.focusSecurityAgentPrompt()
+                    let isSecPromptReady = self.accessibility.focusSystemAuthPrompt()
                     usleep(80000)
 
                     let frontmost = NSWorkspace.shared.frontmostApplication
-                    let isSecurityAgent = (frontmost?.bundleIdentifier == "com.apple.SecurityAgent" || frontmost?.localizedName == "SecurityAgent")
-                    if isSecurityAgent || isSecPromptReady {
+                    let isSystemAuth = frontmost.map { AccessibilityHelper.isSystemAuthApp($0) } ?? false
+                    if isSystemAuth || isSecPromptReady {
                         self.accessibility.simulateKeystrokes(password, pressEnter: autoConfirm)
                         SystemNotifier.shared.postNotification(
                             title: "MacHello",
-                            body: "✓ 管理员弹窗 Face ID 认证成功，密码已填入！",
+                            body: "✓ 系统安全弹窗 Face ID 认证成功，密码已填入！",
                             force: true
                         )
                     } else {
-                        NSLog("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的 SecurityAgent 提权弹窗，取消操作")
+                        NSLog("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的系统安全提权弹窗，取消操作")
                     }
                 } else {
                     SystemNotifier.shared.postNotification(
                         title: "MacHello",
-                        body: "✓ 管理员弹窗 Face ID 认证成功，密码已填入！",
+                        body: "✓ 系统安全弹窗 Face ID 认证成功，密码已填入！",
                         force: true
                     )
                 }

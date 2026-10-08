@@ -65,8 +65,9 @@ This project has been extensively tested, tuned, and verified on real production
   - 💻 **Terminal `sudo` Elevation (Direct USB & LAN Linux Gateway)**:
     - Replaces manual password typing with Windows Hello-grade infrared face authentication in terminal sessions.
     - Automatically resolves the invoking user's real preferences via `SUDO_USER` when elevated under root.
-  - 🔐 **Admin Elevation Prompts (`SecurityAgent`)**:
-    - Automatically verifies system administrator prompt dialogs via Face ID. Auto-focuses and activates SecurityAgent password fields to eliminate synthetic key drops.
+  - 🔐 **System Authentication & Admin Prompts (`LocalAuthentication` & `SecurityAgent`)**:
+    - Automatically verifies system administrator prompt dialogs and modern macOS `LocalAuthentication` prompts (**such as iPhone Mirroring "Enable Automatic Authentication"**, Passkeys, and Apple Pay) via Face ID.
+    - Auto-focuses and directly injects credentials into `AXSecureTextField` via macOS native Accessibility APIs, eliminating synthetic keystroke drops or clipboard paste (`⌘V`) blockages caused by Secure Event Input (SEI).
   - 🔒 **Rock-Solid Lock Screen Auto-Unlock**:
     - Built on pure hardware HID events (`CGEventSource(stateID: .hidSystemState)` and `.cghidEventTap`) with atomic chunked Unicode injection, dual Return/Enter keystrokes, and non-destructive wake sequence.
     - Protected by atomic session UUIDs, instant timer cancellation, and 4.0s cooldown guards to eliminate lock screen transition racing.

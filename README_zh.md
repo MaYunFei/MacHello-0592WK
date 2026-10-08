@@ -102,8 +102,9 @@
   - 💻 **终端 sudo 原生 PAM 提权 (本机直连与局域网 Linux 双模通用)**：
     - 终端输入 `sudo`，红外夜视灯一闪秒进 root，彻底告别繁琐的长密码输入；
     - 深度重构底层 C 模块，在 root 权限下自动通过 `SUDO_USER` 逆向解析机主真实家目录偏好设置，彻底根除局域网 Linux 网关模式下 sudo 误判报“Dell 0592WK 未连接”的缺陷；
-  - **应用管理员提权自动授权**：当安装软件或系统设置弹出 `SecurityAgent` 管理员提权窗口时，红外镜头自动秒核验，自动填入钥匙串密码并敲回车，伴随清脆的 Face ID 提示音，如同 iPhone 刷脸支付般丝滑；
-    - **SecurityAgent 弹窗焦点自愈与防拦截**：精准识别系统管理员提权窗口，针对状态栏菜单 (`LSUIElement`) 收起后系统焦点仍停留在原窗口的问题，主动置顶激活 `SecurityAgent` 并精准锁定 `AXSecureTextField` 密码输入框焦点，杜绝误判拦截与击键丢失；
+  - **系统级安全认证与管理员提权自动授权**：当安装软件、系统设置弹出 `SecurityAgent` 管理员提权窗口，或系统呼出现代 `LocalAuthentication` 认证弹窗（**如 iPhone 镜像「启用自动认证」**、Passkeys、Apple Pay 凭据确认等）时，红外镜头自动秒核验，自动填入钥匙串密码并敲回车/点击确认，伴随清脆的 Face ID 提示音，如同 iPhone 刷脸支付般丝滑；
+    - **SecurityAgent 与 LocalAuthentication (`coreautha`) 全架构适配**：全面覆盖传统 `SecurityAgent` 与现代 macOS 的 `com.apple.LocalAuthentication.UIAgent` (`coreautha`) / `LocalAuthenticationRemoteService` 架构；
+    - **弹窗焦点自愈与防拦截**：主动置顶激活系统认证窗口并精准锁定 `AXSecureTextField` 密码输入框焦点，直接通过系统已授权的 Accessibility API 原生注入，彻底攻克现代 macOS 开启 Secure Event Input (SEI) 导致常规模拟击键与剪贴板 `⌘V` 粘贴被系统底层静默丢弃的顽疾；
   - **锁屏感应唤醒自动进桌面**：人回电脑前，屏幕唤醒后毫秒级自动填入解密凭据，免去任何敲键盘操作，直达工作桌面；
   - **深度兼容 macOS 15 Sequoia 锁屏机制**：
     - 严格基于物理硬件 HID 事件源（`CGEventSource(stateID: .hidSystemState)`）与权威硬件通道（`.cghidEventTap`），彻底剔除跨会话双通道分发导致的重字/错字；
