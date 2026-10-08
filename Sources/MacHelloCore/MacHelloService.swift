@@ -9,7 +9,6 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public static let shared = MacHelloService()
 
     @Published public var isDeviceConnected: Bool = false
-    @Published public var isIRActive: Bool = false
     @Published public var isEnrolled: Bool = false
     @Published public var enrolledSamplesCount: Int = 0
 
@@ -226,7 +225,6 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         } else {
             self.isDeviceConnected = irController.isConnected
         }
-        self.isIRActive = (irController.currentMode == .ir)
         let profile = FaceDatabase.shared.load()
         self.isEnrolled = !(profile?.samples.isEmpty ?? true)
         self.enrolledSamplesCount = profile?.samples.count ?? 0
@@ -402,21 +400,6 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     public func setAbsenceTimeout(_ seconds: TimeInterval) {
         autoDisplayService.absenceTimeout = seconds
         self.absenceTimeout = seconds
-    }
-
-    public func toggleIRTest() {
-        if isNetworkModeEnabled && isLinuxConnected {
-            linuxClient.toggleIR { [weak self] irActive in
-                self?.isIRActive = irActive
-                self?.objectWillChange.send()
-            }
-            return
-        }
-        guard isDeviceConnected else { return }
-        let success = irController.toggle()
-        if success {
-            self.isIRActive = (irController.currentMode == .ir)
-        }
     }
 
     public func clearFaceData() {

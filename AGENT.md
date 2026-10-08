@@ -27,18 +27,16 @@
      - 视频观影/在线会议免打扰（实时状态指示：🟢 运行中透传来源 App，如 `Google Chrome` / ⚪ 待命中）
      - 机主专属防窥鉴权模式（仅限机主本人才亮屏）
      - 离席等待时长（10秒/15秒/30秒/60秒）
-     - 🌙 红外硬件测试（手动点亮/熄灭测试）
      - 📸 录入新面孔（Face Enrollment）
      - 🚪 退出应用
 2. **后台常驻与开机启动**：
    - 使用现代 macOS 原生 `SMAppService.mainApp.register()` 管理开机无感自启。
-3. **自动化打包与无缝热替换开发工作流 (HOT REPLACEMENT WORKFLOW - CRITICAL)**：
-   - **本地硬性工作流规则**：每次修改完代码，必须严格遵循闭环流程：
-     1. 运行并通过单元测试：`swift test`；
-     2. 同步更新中英文说明与规范文档（`README.md`、`README_zh.md`、`AGENT.md`）；
-     3. 提交代码变更至 Git 仓库：`git commit`；
-     4. 自动执行打包与本地安装替换：`./scripts/package-app.sh --install`。
-   - 必须通过 `./scripts/package-app.sh --install` 完成闭环：**自动平滑退出当前旧版 App 进程（`killall MacHello`） -> 将新 App 安装到 `/Applications/MacHello.app` -> 重新启动新 App (`open /Applications/MacHello.app`)**，确保用户无缝测试最新构建，严禁遗留未安装的构建或要求用户手动操作。
+3. **自动化打包、提交推送与无缝热替换开发工作流 (HOT REPLACEMENT WORKFLOW - CRITICAL)**：
+   - **本地硬性工作流规则 (全自动闭环)**：每次修改完代码，必须严格遵循并自动执行以下闭环流程：
+     1. **单元测试验证**：运行并通过测试：`swift test`；
+     2. **文档同步更新**：同步更新中英文说明与规范文档（`README.md`、`README_zh.md`、`AGENT.md`）；
+     3. **代码提交与远程推送**：提交代码变更至 Git 仓库并推送到远程：`git commit` 并且 `git push`；
+     4. **全自动编译打包与本地安装替换**：必须自动执行 `./scripts/package-app.sh --install` 完成闭环（自动平滑退出当前旧版 App 进程 `killall MacHello` -> 将最新构建安装到 `/Applications/MacHello.app` -> 重新启动新 App `open /Applications/MacHello.app`），确保用户无缝使用最新构建，严禁遗留未安装的构建或要求用户手动操作。
 4. **双部署工作模式架构规范 (DUAL DEPLOYMENT MODES)**：
    - **🔌 本机 USB 直连模式 (Local BLEUnlock Mode)**：
      - 当摄像头直接插在 Mac 上时，遵循 [ts1/BLEUnlock](https://github.com/ts1/BLEUnlock) 的纯净规范：平时亮屏工作与静止阅读期间，摄像头 **100% 保持彻底断电关闭**，0% CPU，状态栏 0 绿色隐私指示灯；

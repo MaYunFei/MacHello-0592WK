@@ -175,18 +175,6 @@ struct MacHelloApp: App {
             }
             .disabled(!service.isDeviceConnected && !service.isNetworkModeEnabled)
 
-            Button {
-                service.toggleIRTest()
-            } label: {
-                Label(
-                    service.isIRActive
-                        ? loc("Turn Off IR Test LED", "熄灭红外测试灯")
-                        : loc("Turn On IR Test LED", "点亮红外测试灯"),
-                    systemImage: service.isIRActive ? "moon.stars.fill" : "moon.stars"
-                )
-            }
-            .disabled(!service.isDeviceConnected && !service.isNetworkModeEnabled)
-
             Divider()
 
             // 5. 权限提权与全场景免密

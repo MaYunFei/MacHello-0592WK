@@ -292,26 +292,9 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
             } else {
                 irActive = isIR
             }
-            DispatchQueue.main.async {
-                MacHelloService.shared.isIRActive = irActive
-            }
             // 关键：在网络回调当前线程立即执行 completion，不能放在主线程队列中，
             // 避免 CLI 工具（如终端 sudo 鉴权程序 machello-auth）主线程在阻塞等待信号量时死锁
             completion?(irActive)
-        }.resume()
-    }
-
-    /// 远程切换 Linux 摄像头的红外灯
-    public func toggleIR(completion: ((Bool) -> Void)? = nil) {
-        guard let url = URL(string: "\(serverURLString)/api/ir/toggle") else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
-            if let data = data,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let irActive = json["ir_active"] as? Bool {
-                DispatchQueue.main.async {
-                    completion?(irActive)
-                }
-            }
         }.resume()
     }
 }
