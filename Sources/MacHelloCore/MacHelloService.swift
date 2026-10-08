@@ -31,6 +31,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     @Published public var isAppAuthEnabled: Bool = true
     @Published public var isLockScreenUnlockEnabled: Bool = true
     @Published public var isAudioFeedbackEnabled: Bool = true
+    @Published public var isNotificationFeedbackEnabled: Bool = false
     @Published public var hasStoredPassword: Bool = false
     @Published public var isAccessibilityTrusted: Bool = false
     @Published public var isPromptTestRunning: Bool = false
@@ -244,6 +245,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isAppAuthEnabled = AutoAuthManager.shared.isAppAuthEnabled
         self.isLockScreenUnlockEnabled = AutoAuthManager.shared.isLockScreenUnlockEnabled
         self.isAudioFeedbackEnabled = AutoAuthManager.shared.isAudioFeedbackEnabled
+        self.isNotificationFeedbackEnabled = AutoAuthManager.shared.isNotificationFeedbackEnabled
         self.hasStoredPassword = KeychainHelper.shared.hasPassword()
         self.isAccessibilityTrusted = AccessibilityHelper.shared.isTrusted
     }
@@ -442,6 +444,12 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
         self.isAudioFeedbackEnabled = newState
     }
 
+    public func toggleNotificationFeedback() {
+        let newState = !isNotificationFeedbackEnabled
+        AutoAuthManager.shared.isNotificationFeedbackEnabled = newState
+        self.isNotificationFeedbackEnabled = newState
+    }
+
     public func toggleAdminPromptAutoConfirm() {
         let newState = !isAdminPromptAutoConfirm
         AutoAuthManager.shared.isAdminPromptAutoConfirm = newState
@@ -471,47 +479,50 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
     /// 全局快捷键触发 Face ID 刷脸并自动填入当前密码框
     public func triggerManualPasswordFill() {
         guard isDeviceConnected || isNetworkModeEnabled else {
-            SystemNotifier.shared.postNotification(
-                title: "MacHello",
-                body: "摄像头未连接或网络服务离线，无法进行人脸核验",
-                force: true
-            )
+            if isNotificationFeedbackEnabled {
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "摄像头未连接或网络服务离线，无法进行人脸核验",
+                    force: true
+                )
+            }
             return
         }
 
         guard FaceDatabase.shared.isEnrolled else {
-            SystemNotifier.shared.postNotification(
-                title: "MacHello",
-                body: "尚未录入机主面容，请先在菜单中设置面容 ID",
-                force: true
-            )
+            if isNotificationFeedbackEnabled {
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "尚未录入机主面容，请先在菜单中设置面容 ID",
+                    force: true
+                )
+            }
             return
         }
 
         guard hasStoredPassword else {
-            SystemNotifier.shared.postNotification(
-                title: "MacHello",
-                body: "钥匙串未保存密码，请先在菜单中设置解锁密码",
-                force: true
-            )
+            if isNotificationFeedbackEnabled {
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "钥匙串未保存密码，请先在菜单中设置解锁密码",
+                    force: true
+                )
+            }
             return
         }
 
         guard isAccessibilityTrusted else {
-            SystemNotifier.shared.postNotification(
-                title: "MacHello",
-                body: "缺少辅助功能权限，无法模拟填密，请前往系统设置授权",
-                force: true
-            )
+            if isNotificationFeedbackEnabled {
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "缺少辅助功能权限，无法模拟填密，请前往系统设置授权",
+                    force: true
+                )
+            }
             return
         }
 
         AutoAuthManager.shared.triggerFaceAuthForPrompt(reason: .manualFill)
-    }
-
-    /// 单独试听 Face ID 认证成功提示音
-    public func playTestAudio() {
-        AudioFeedbackHelper.shared.playSuccess()
     }
 
     public func promptToStorePassword() {
@@ -710,7 +721,7 @@ public class MacHelloService: ObservableObject, DisplayPowerObserver {
                 p.waitUntilExit()
                 if p.terminationStatus == 0 {
                     let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    if !out.isEmpty {
+                    if !out.isEmpty && self.isNotificationFeedbackEnabled {
                         SystemNotifier.shared.postNotification(
                             title: "MacHello Face ID",
                             subtitle: loc("Admin Elevation Succeeded", "管理员提权认证成功"),

@@ -26,6 +26,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
     private let defaultsKeyAppAuth = "com.machello.isAppAuthEnabled"
     private let defaultsKeyLockScreenUnlock = "com.machello.isLockScreenUnlockEnabled"
     private let defaultsKeyAudioFeedback = "com.machello.isAudioFeedbackEnabled"
+    private let defaultsKeyNotificationFeedback = "com.machello.isNotificationFeedbackEnabled"
     private let defaultsKeyAdminPromptAutoConfirm = "com.machello.isAdminPromptAutoConfirm"
 
     public var isAdminPromptAutoConfirm: Bool {
@@ -73,6 +74,18 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: defaultsKeyAudioFeedback)
+        }
+    }
+
+    public var isNotificationFeedbackEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: defaultsKeyNotificationFeedback) == nil {
+                return false // 默认不发送通知
+            }
+            return UserDefaults.standard.bool(forKey: defaultsKeyNotificationFeedback)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: defaultsKeyNotificationFeedback)
         }
     }
 
@@ -265,7 +278,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             let isCameraConnected = self.cameraService.isNetworkMode ? LinuxPresenceClient.shared.isConnected : self.irController.isConnected
             guard isCameraConnected else {
                 NSLog("[AutoAuth] 摄像头硬件离线或网络服务未就绪，跳过自动核验")
-                if reason == .manualFill {
+                if reason == .manualFill && self.isNotificationFeedbackEnabled {
                     SystemNotifier.shared.postNotification(
                         title: "MacHello",
                         body: "摄像头硬件离线或网络服务未就绪，无法核验",
@@ -286,7 +299,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
 
             guard hasRequiredPassword else {
                 NSLog("[AutoAuth] 钥匙串中未保存对应密码，跳过自动填入")
-                if reason == .manualFill {
+                if reason == .manualFill && self.isNotificationFeedbackEnabled {
                     let name = self.accessibility.frontmostAppName() ?? "该应用"
                     SystemNotifier.shared.postNotification(
                         title: "MacHello",
@@ -298,7 +311,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             }
             guard self.faceDb.isEnrolled else {
                 NSLog("[AutoAuth] 尚未录入面容，跳过自动填入")
-                if reason == .manualFill {
+                if reason == .manualFill && self.isNotificationFeedbackEnabled {
                     SystemNotifier.shared.postNotification(
                         title: "MacHello",
                         body: "尚未录入面容，请先在菜单中录入面容 ID",
@@ -325,7 +338,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             }
             NSLog("[AutoAuth] 触发 Face ID (%@) [Session: %@]，启动 850nm 红外夜视人脸核验...", reasonDesc, String(sessionID.uuidString.prefix(8)))
 
-            if reason == .manualFill {
+            if reason == .manualFill && self.isNotificationFeedbackEnabled {
                 SystemNotifier.shared.postNotification(
                     title: "MacHello",
                     body: "正在启动红外相机进行 Face ID 面容比对...",
@@ -361,13 +374,15 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                         if self.isAudioFeedbackEnabled {
                             AudioFeedbackHelper.shared.playFailure()
                         }
-                        let pct = Int(self.highestFailedScore * 100)
-                        let msg = pct > 0 ? "⚠️ 面容比对未通过 (最高相似度: \(pct)%)" : "⚠️ 面容比对超时 (未检测到人脸)"
-                        SystemNotifier.shared.postNotification(
-                            title: "MacHello",
-                            body: msg,
-                            force: true
-                        )
+                        if self.isNotificationFeedbackEnabled {
+                            let pct = Int(self.highestFailedScore * 100)
+                            let msg = pct > 0 ? "⚠️ 面容比对未通过 (最高相似度: \(pct)%)" : "⚠️ 面容比对超时 (未检测到人脸)"
+                            SystemNotifier.shared.postNotification(
+                                title: "MacHello",
+                                body: msg,
+                                force: true
+                            )
+                        }
                     }
                     let reasonStr = self.currentReason.logReasonString
                     if let failedBuffer = self.lastAttemptPixelBuffer {
@@ -567,11 +582,13 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             if isAudioFeedbackEnabled {
                 AudioFeedbackHelper.shared.playFailure()
             }
-            SystemNotifier.shared.postNotification(
-                title: "MacHello",
-                body: "❌ 钥匙串解密失败！请检查钥匙串授权或重新保存密码",
-                force: true
-            )
+            if isNotificationFeedbackEnabled {
+                SystemNotifier.shared.postNotification(
+                    title: "MacHello",
+                    body: "❌ 钥匙串解密失败！请检查钥匙串授权或重新保存密码",
+                    force: true
+                )
+            }
             DispatchQueue.main.async {
                 let alert = NSAlert()
                 alert.messageText = "MacHello 钥匙串访问未授权"
@@ -612,20 +629,24 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
             } else if case .customApp(_, let appName, let autoConfirm) = reason {
                 NSLog("[AutoAuth] ✓ 专属应用 (%@) 刷脸核验成功，自动填入密码 (自动回车: %d)...", appName, autoConfirm)
                 self.accessibility.fillActivePasswordField(password: password, autoConfirm: autoConfirm)
-                SystemNotifier.shared.postNotification(
-                    title: "MacHello",
-                    body: "✓ Face ID 认证成功，\(appName) 密码已填入！",
-                    force: true
-                )
+                if self.isNotificationFeedbackEnabled {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello",
+                        body: "✓ Face ID 认证成功，\(appName) 密码已填入！",
+                        force: true
+                    )
+                }
             } else if reason == .manualFill {
                 // 全局快捷键刷脸填密模式：填充密码框（不自动按回车，安全受控）
                 NSLog("[AutoAuth] ✓ 全局快捷键刷脸核验成功，自动填入当前密码框...")
                 self.accessibility.fillActivePasswordField(password: password, autoConfirm: false)
-                SystemNotifier.shared.postNotification(
-                    title: "MacHello",
-                    body: "✓ Face ID 认证成功，密码已填入！",
-                    force: true
-                )
+                if self.isNotificationFeedbackEnabled {
+                    SystemNotifier.shared.postNotification(
+                        title: "MacHello",
+                        body: "✓ Face ID 认证成功，密码已填入！",
+                        force: true
+                    )
+                }
             } else {
                 // 【绝对安全铁律 2】：系统安全/管理员弹窗模式下，确系安全认证提权框处于活跃状态！
                 // 解决：macOS 14/15/27 启用 Secure Event Input 导致底层 CGEvent 键盘模拟事件被 WindowServer 静默拦截丢弃的问题。
@@ -643,20 +664,24 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
                     let isSystemAuth = frontmost.map { AccessibilityHelper.isSystemAuthApp($0) } ?? false
                     if isSystemAuth || isSecPromptReady {
                         self.accessibility.simulateKeystrokes(password, pressEnter: autoConfirm)
+                        if self.isNotificationFeedbackEnabled {
+                            SystemNotifier.shared.postNotification(
+                                title: "MacHello",
+                                body: "✓ 系统安全弹窗 Face ID 认证成功，密码已填入！",
+                                force: true
+                            )
+                        }
+                    } else {
+                        NSLog("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的系统安全提权弹窗，取消操作")
+                    }
+                } else {
+                    if self.isNotificationFeedbackEnabled {
                         SystemNotifier.shared.postNotification(
                             title: "MacHello",
                             body: "✓ 系统安全弹窗 Face ID 认证成功，密码已填入！",
                             force: true
                         )
-                    } else {
-                        NSLog("[AutoAuth] ⚠️ 致命安全拦截：当前屏幕未找到活跃的系统安全提权弹窗，取消操作")
                     }
-                } else {
-                    SystemNotifier.shared.postNotification(
-                        title: "MacHello",
-                        body: "✓ 系统安全弹窗 Face ID 认证成功，密码已填入！",
-                        force: true
-                    )
                 }
             }
         }

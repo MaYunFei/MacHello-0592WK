@@ -263,9 +263,10 @@ struct MacHelloApp: App {
                     set: { _ in service.toggleAudioFeedback() }
                 ))
 
-                Button(loc("Play Test Success Sound", "试听认证提示音")) {
-                    service.playTestAudio()
-                }
+                Toggle(loc("Send Notification on Face ID Success", "发送 Face ID 认证成功通知"), isOn: Binding(
+                    get: { service.isNotificationFeedbackEnabled },
+                    set: { _ in service.toggleNotificationFeedback() }
+                ))
 
                 Divider()
 

@@ -262,4 +262,27 @@ final class MacHelloTests: XCTestCase {
         // 4. 不可见 PID 必须判定为离屏 (防止常驻后台服务被误判可见从而偷焦)
         XCTAssertFalse(AccessibilityHelper.isProcessWindowOnScreen(pid: 999999))
     }
+
+    func testAutoAuthFeedbackSettings() {
+        let manager = AutoAuthManager.shared
+        let originalSound = manager.isAudioFeedbackEnabled
+        let originalNotification = manager.isNotificationFeedbackEnabled
+
+        defer {
+            manager.isAudioFeedbackEnabled = originalSound
+            manager.isNotificationFeedbackEnabled = originalNotification
+        }
+
+        // 验证通知反馈开关配置与持久化
+        manager.isNotificationFeedbackEnabled = true
+        XCTAssertTrue(manager.isNotificationFeedbackEnabled)
+        manager.isNotificationFeedbackEnabled = false
+        XCTAssertFalse(manager.isNotificationFeedbackEnabled)
+
+        // 验证声音提示开关配置与持久化
+        manager.isAudioFeedbackEnabled = true
+        XCTAssertTrue(manager.isAudioFeedbackEnabled)
+        manager.isAudioFeedbackEnabled = false
+        XCTAssertFalse(manager.isAudioFeedbackEnabled)
+    }
 }

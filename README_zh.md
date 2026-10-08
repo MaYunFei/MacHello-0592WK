@@ -61,8 +61,7 @@
   - **动态自适应采样率**：确认机主在席后，特征提取自动降频至 1.0 FPS 巡航，Vision 计算开销不足 0.2%，兼顾极致省电与系统丝滑稳定；
   - 离开电脑超时后自动熄屏，息屏后采用 8 秒长周期轻柔巡检，保护红外 LED 硬件寿命。
 - 🔌 **摄像头设备即插即用与热插拔自愈 (Hotplug Auto-Detection)**：
-  - 支持免重启热插拔：应用启动后再插入 Dell 0592WK 摄像头，系统通过 `AVCaptureDevice.wasConnectedNotification` 与心跳探测毫秒级自动重连并激活硬件，拔出后自动平滑降级，无需手动重启应用；
-  - 菜单中内置 **「🔊 试听认证成功提示音」**，无需触发真实锁屏即可一键独立验证音效。
+  - 支持免重启热插拔：应用启动后再插入 Dell 0592WK 摄像头，系统通过 `AVCaptureDevice.wasConnectedNotification` 与心跳探测毫秒级自动重连并激活硬件，拔出后自动平滑降级，无需手动重启应用。
 - 🎬 **音视频观影与在线会议智能免打扰 (带实时运行指示灯与进程透传)**：
   - 深度集成 IOKit 电源断言探测 (`IOPMCopyAssertionsStatus` 与 `IOPMCopyAssertionsByProcess`)；
   - 无论在 Safari / Chrome 观看 **YouTube / B 站 / 奈飞**，还是使用 **IINA / VLC** 播放电影，或是 **Zoom / 腾讯会议** 在线开会；
