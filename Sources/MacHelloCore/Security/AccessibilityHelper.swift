@@ -144,15 +144,88 @@ public final class AccessibilityHelper {
         return isSystemAuthIdentifier(bundleId: app.bundleIdentifier, processName: app.localizedName)
     }
 
-    /// 获取当前处于前台或活跃运行中的系统安全认证进程
+    /// 检查指定进程当前是否在屏幕上拥有真实、可见的窗口 (排除尺寸过小或完全离屏的后台图层)
+    public static func isProcessWindowOnScreen(pid: pid_t) -> Bool {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return false
+        }
+        for win in list {
+            let winPid = win[kCGWindowOwnerPID as String] as? Int ?? 0
+            let layer = win[kCGWindowLayer as String] as? Int ?? 0
+            let bounds = win[kCGWindowBounds as String] as? [String: Any] ?? [:]
+            let width = bounds["Width"] as? Double ?? 0
+            let height = bounds["Height"] as? Double ?? 0
+            // 真实可见窗口：归属当前 PID，图层处于有效层级，且宽高大于 20px
+            if winPid == Int(pid) && layer >= 0 && width > 20 && height > 20 {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 检查指定应用是否具有包含 AXSecureTextField 的窗口
+    public static func appHasSecurePromptWindow(_ app: NSRunningApplication) -> Bool {
+        let appElem = AXUIElementCreateApplication(app.processIdentifier)
+
+        var candidates: [AXUIElement] = []
+        var mainWin: AnyObject?
+        if AXUIElementCopyAttributeValue(appElem, kAXMainWindowAttribute as CFString, &mainWin) == .success,
+           let mw = mainWin {
+            candidates.append(mw as! AXUIElement)
+        }
+        var focusedWin: AnyObject?
+        if AXUIElementCopyAttributeValue(appElem, kAXFocusedWindowAttribute as CFString, &focusedWin) == .success,
+           let fw = focusedWin {
+            candidates.append(fw as! AXUIElement)
+        }
+        var windowsElem: AnyObject?
+        if AXUIElementCopyAttributeValue(appElem, kAXWindowsAttribute as CFString, &windowsElem) == .success,
+           let wins = windowsElem as? [AXUIElement] {
+            candidates.append(contentsOf: wins)
+        }
+
+        guard !candidates.isEmpty else { return false }
+
+        func hasSecureField(_ el: AXUIElement, depth: Int = 0) -> Bool {
+            guard depth < 6 else { return false }
+            var subrole: AnyObject?
+            AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &subrole)
+            if (subrole as? String) == "AXSecureTextField" {
+                return true
+            }
+            var children: AnyObject?
+            AXUIElementCopyAttributeValue(el, kAXChildrenAttribute as CFString, &children)
+            if let list = children as? [AXUIElement] {
+                for child in list {
+                    if hasSecureField(child, depth: depth + 1) {
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        return candidates.contains { hasSecureField($0) }
+    }
+
+    /// 获取当前处于前台或活跃运行中、且在屏幕上拥有真实可见安全弹窗的系统认证进程
     public func findSystemAuthApp() -> NSRunningApplication? {
-        // 1. 优先检查当前处于前台的应用
-        if let front = NSWorkspace.shared.frontmostApplication, Self.isSystemAuthApp(front) {
+        let front = NSWorkspace.shared.frontmostApplication
+        // 1. 如果当前前台应用确系系统认证代理，且在屏幕上有真实可见窗口
+        if let front = front, Self.isSystemAuthApp(front), Self.isProcessWindowOnScreen(pid: front.processIdentifier) {
             return front
         }
-        // 2. 其次从运行列表中查找活跃的系统认证服务
+
+        // 2. 否则，仅查找【在屏幕上有真实可见窗口】且【确实包含密码输入框】的系统认证进程
+        // 严禁将没有任何窗口的后台常驻守护进程 (如空闲状态下的 coreautha / RemoteService) 误当成前台弹窗，杜绝偷抢焦点！
         let runningApps = NSWorkspace.shared.runningApplications
-        return runningApps.first(where: { Self.isSystemAuthApp($0) })
+        for app in runningApps where Self.isSystemAuthApp(app) {
+            if Self.isProcessWindowOnScreen(pid: app.processIdentifier) && Self.appHasSecurePromptWindow(app) {
+                return app
+            }
+        }
+        return nil
     }
 
     /// 激活并聚焦系统安全认证弹窗（SecurityAgent 或 LocalAuthentication coreautha）
@@ -188,10 +261,12 @@ public final class AccessibilityHelper {
         }
 
         while Date() < deadline {
-            if #available(macOS 14.0, *) {
-                secApp.activate()
-            } else {
-                secApp.activate(options: .activateIgnoringOtherApps)
+            if !secApp.isActive {
+                if #available(macOS 14.0, *) {
+                    secApp.activate()
+                } else {
+                    secApp.activate(options: .activateIgnoringOtherApps)
+                }
             }
 
             // 系统特权弹窗可能直接挂在 AXMainWindow / AXFocusedWindow 上，AXWindows 数组可能为空
@@ -241,10 +316,12 @@ public final class AccessibilityHelper {
         let deadline = Date().addingTimeInterval(timeout)
 
         while Date() < deadline {
-            if #available(macOS 14.0, *) {
-                secApp.activate()
-            } else {
-                secApp.activate(options: .activateIgnoringOtherApps)
+            if !secApp.isActive {
+                if #available(macOS 14.0, *) {
+                    secApp.activate()
+                } else {
+                    secApp.activate(options: .activateIgnoringOtherApps)
+                }
             }
 
             // 汇总所有可能的根窗口（AXMainWindow、AXFocusedWindow、AXWindows）
@@ -468,36 +545,13 @@ public final class AccessibilityHelper {
     /// 自动将密码填入当前聚焦的输入框或前台安全输入框
     @discardableResult
     public func fillActivePasswordField(password: String, autoConfirm: Bool = false) -> Bool {
-        // 1. 优先尝试系统级特权/安全弹窗通道（SecurityAgent 或 LocalAuthentication coreautha / RemoteService）
-        if fillAndConfirmSystemAuthPrompt(password: password, autoConfirm: autoConfirm, timeout: 0.4) {
+        // 1. 优先尝试系统级特权/安全弹窗通道（严格核验必须在屏幕上有真实可见窗口，杜绝后台空闲守护误判偷抢焦点）
+        if fillAndConfirmSystemAuthPrompt(password: password, autoConfirm: autoConfirm, timeout: 0.3) {
             return true
         }
 
-        // 2. 尝试向前台当前激活窗口的 AXSecureTextField 原生写入（解决各类以 Sheet / Modal 嵌入的密码框）
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
-            let appElem = AXUIElementCreateApplication(frontApp.processIdentifier)
-            var focusedElem: AnyObject?
-            if AXUIElementCopyAttributeValue(appElem, kAXFocusedUIElementAttribute as CFString, &focusedElem) == .success,
-               let el = focusedElem {
-                let targetEl = el as! AXUIElement
-                var subrole: AnyObject?
-                AXUIElementCopyAttributeValue(targetEl, kAXSubroleAttribute as CFString, &subrole)
-                if (subrole as? String) == "AXSecureTextField" {
-                    let setErr = AXUIElementSetAttributeValue(targetEl, kAXValueAttribute as CFString, password as CFTypeRef)
-                    if setErr == .success {
-                        if autoConfirm {
-                            usleep(20000)
-                            _ = AXUIElementPerformAction(targetEl, "AXConfirm" as CFString)
-                            simulateReturnKey()
-                        }
-                        return true
-                    }
-                }
-            }
-        }
-
-        // 3. 针对普通应用、网页浏览器（Safari/Chrome）、第三方桌面软件的常规输入框：
-        // 采用瞬时隐私剪贴板 + ⌘V 原生注入，100% 适用于任何有光标闪烁的输入框，无需目标应用特殊权限
+        // 2. 针对普通应用、网页浏览器（Safari/Chrome）、第三方桌面软件的常规输入框：
+        // 采用瞬时隐私剪贴板 + ⌘V 原生注入，100% 适用于任何有光标闪烁的输入框，零焦点劫持，无需目标应用特殊权限
         pastePassword(password, autoConfirm: autoConfirm)
         return true
     }

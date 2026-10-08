@@ -192,7 +192,7 @@ public final class AutoAuthManager: NSObject, CameraCaptureDelegate {
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
 
         let bid = app.bundleIdentifier ?? ""
-        let isSystemAuth = AccessibilityHelper.isSystemAuthApp(app)
+        let isSystemAuth = AccessibilityHelper.isSystemAuthApp(app) && AccessibilityHelper.isProcessWindowOnScreen(pid: app.processIdentifier)
         if isSystemAuth && isAppAuthEnabled {
             // 防抖：2秒内不重复触发
             let now = Date()

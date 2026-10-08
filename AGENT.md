@@ -142,7 +142,8 @@
    - **真锁屏机制**：无操作超时必须调用 `SACLockScreenImmediate()`（调用 macOS `login.framework` 原生接口），确保系统真正且立刻切入 `loginwindow` 锁屏状态，严禁仅调用 `pmset displaysleepnow`（单纯息屏未锁屏会导致按键泄露至桌面应用）；
    - **模拟键入绝对双重核验**：
      - 若为锁屏解锁（`.lockScreen`），**必须在发送按键前严格多重校验 `isScreenLocked() == true`**。一旦检测到当前不在锁屏界面（已处于普通桌面窗口），必须立即熔断、绝对严禁发送任何按键，坚决防止密码被打入终端或聊天对话框；
-     - 若为系统安全/管理员弹窗提权（`.adminPrompt` / `manualFill`），**必须严格核验确系系统安全认证代理**（全面覆盖传统 `com.apple.SecurityAgent` 与现代 macOS 的 `com.apple.LocalAuthentication.UIAgent` / `coreautha`、`LocalAuthenticationRemoteService`，包括 iPhone 镜像启用自动认证、Passkeys、Apple Pay 等系统级安全弹窗）。主动调用 `focusSystemAuthPrompt` 激活系统认证窗口并置入 `AXSecureTextField` 密码框焦点；多重校验 `isSystemAuth || isSecPromptReady`，直接通过 Accessibility API 注入密码，彻底解决 Secure Event Input 导致常规模拟击键与剪贴板 ⌘V 粘贴被系统静默丢弃的问题。如果检测不到任何活跃的系统安全弹窗且无安全输入框，严禁盲目发送按键。
+     - 若为系统安全/管理员弹窗提权（`.adminPrompt` / `manualFill`），**必须严格核验确系系统安全认证代理**（全面覆盖传统 `com.apple.SecurityAgent` 与现代 macOS 的 `com.apple.LocalAuthentication.UIAgent` / `coreautha`、`LocalAuthenticationRemoteService`，包括 iPhone 镜像启用自动认证、Passkeys、Apple Pay 等系统级安全弹窗）。主动调用 `focusSystemAuthPrompt` 激活系统认证窗口并置入 `AXSecureTextField` 密码框焦点；多重校验 `isSystemAuth || isSecPromptReady`，直接通过 Accessibility API 注入密码，彻底解决 Secure Event Input 导致常规模拟击键与剪贴板 ⌘V 粘贴被系统静默丢弃的问题。
+     - **严禁后台守护误判偷焦 (Zero Focus-Stealing Guard - CRITICAL)**：macOS 系统中的 `coreautha` 和 `LocalAuthenticationRemoteService` 作为系统服务常驻后台（窗口数通常为 0）。在执行系统提权判断时，**必须调用 `isProcessWindowOnScreen(pid:)` 严格核验该进程在屏幕上确实拥有真实可见窗口，且该窗口内确实存在 `AXSecureTextField`**。严禁对后台空闲守护进程盲目执行 `secApp.activate()`，确保普通桌面应用（Chrome、Safari、Terminal、聊天软件等）触发快捷键刷脸填密时 100% 保持当前输入框焦点不丢失。如果检测不到任何活跃的系统安全弹窗且无安全输入框，严禁盲目发送按键。
 9. **外设即插即用与热插拔自愈 (USB Hotplug & Device Discovery)**：
    - 监听 `AVCaptureDevice.wasConnectedNotification` 与 `wasDisconnectedNotification`，并配合每秒硬件状态心跳探测；
    - 保证用户在应用启动之后随时插入或拔出摄像头时，系统能在 300ms 内自动识别、重置硬件到 RGB 就绪状态并刷新菜单状态，严禁要求用户手动杀死进程重启。

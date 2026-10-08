@@ -258,5 +258,8 @@ final class MacHelloTests: XCTestCase {
         XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.Safari", processName: "Safari"))
         XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: "com.apple.Terminal", processName: "Terminal"))
         XCTAssertFalse(AccessibilityHelper.isSystemAuthIdentifier(bundleId: nil, processName: nil))
+
+        // 4. 不可见 PID 必须判定为离屏 (防止常驻后台服务被误判可见从而偷焦)
+        XCTAssertFalse(AccessibilityHelper.isProcessWindowOnScreen(pid: 999999))
     }
 }
