@@ -183,7 +183,11 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
         if isRunning {
             if isNetworkMode {
                 networkReceiver.stop()
-                LinuxPresenceClient.shared.setIRMode(isIR: false)
+                let sem = DispatchSemaphore(value: 0)
+                LinuxPresenceClient.shared.setIRMode(isIR: false) { _ in
+                    sem.signal()
+                }
+                _ = sem.wait(timeout: .now() + 1.5)
             } else {
                 session.stopRunning()
             }

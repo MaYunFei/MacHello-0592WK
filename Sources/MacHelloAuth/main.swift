@@ -126,7 +126,14 @@ final class Authenticator: NSObject, CameraCaptureDelegate {
 
     private func cleanup() {
         cameraService.stop()
-        if !cameraService.isNetworkMode && irController.isConnected {
+        if cameraService.isNetworkMode {
+            // 双重安全防线：确保向 Linux 网关发送的熄灯复位请求确实完成，防止 CLI 进程退出导致连接被内核掐断
+            let sem = DispatchSemaphore(value: 0)
+            LinuxPresenceClient.shared.setIRMode(isIR: false) { _ in
+                sem.signal()
+            }
+            _ = sem.wait(timeout: .now() + 1.5)
+        } else if irController.isConnected {
             irController.resetToRGB()
         }
     }
@@ -235,12 +242,24 @@ var preferIR = true
 // 注册退出信号捕获，保证硬件安全复位
 signal(SIGINT) { _ in
     CameraCaptureService.shared.stop()
-    IRController.shared.resetToRGB()
+    if CameraCaptureService.shared.isNetworkMode {
+        let sem = DispatchSemaphore(value: 0)
+        LinuxPresenceClient.shared.setIRMode(isIR: false) { _ in sem.signal() }
+        _ = sem.wait(timeout: .now() + 1.0)
+    } else {
+        IRController.shared.resetToRGB()
+    }
     exit(130)
 }
 signal(SIGTERM) { _ in
     CameraCaptureService.shared.stop()
-    IRController.shared.resetToRGB()
+    if CameraCaptureService.shared.isNetworkMode {
+        let sem = DispatchSemaphore(value: 0)
+        LinuxPresenceClient.shared.setIRMode(isIR: false) { _ in sem.signal() }
+        _ = sem.wait(timeout: .now() + 1.0)
+    } else {
+        IRController.shared.resetToRGB()
+    }
     exit(143)
 }
 

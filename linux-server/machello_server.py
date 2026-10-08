@@ -207,6 +207,7 @@ class VideoGateway:
         self.lock = threading.Lock()
         self.active_viewers = 0
         self.ir_test_active = False
+        self.ir_enabled_at = 0.0
         self.current_mode_is_ir = False
         self.latest_jpeg: Optional[bytes] = None
         self.subscribers: Set[asyncio.Queue] = set()
@@ -281,6 +282,7 @@ class VideoGateway:
         """开启或关闭红外测试模式（切换硬件镜头与模式）"""
         with self.lock:
             self.ir_test_active = enable
+            self.ir_enabled_at = time.time() if enable else 0.0
             self.latest_jpeg = None
             self.ir_controller.set_mode(enable)
             # 切换底层硬件镜头模式，释放当前流以重新协商分辨率与编码
@@ -303,6 +305,19 @@ class VideoGateway:
             with self.lock:
                 viewers = self.active_viewers
                 ir_test = self.ir_test_active
+
+            now = time.time()
+            if ir_test:
+                # 硬件看门狗保护：若所有客户端已断开且无在线观众超过 3 秒，或者红外模式常开超过 25 秒硬上限，
+                # 强行切断红外管供电并恢复为 RGB 可见光模式，防止红外管长明发热光衰
+                if viewers <= 0 and (now - self.ir_enabled_at > 3.0):
+                    logger.warning("🛡️ 硬件看门狗保护：流客户端已全部断开，自动切断 850nm 红外发射管供电恢复 RGB 模式")
+                    self.set_ir_test(False)
+                    continue
+                elif (now - self.ir_enabled_at > 25.0):
+                    logger.warning("🛡️ 硬件看门狗保护：红外开启超过 25 秒硬上限，强行切断供电恢复 RGB 模式")
+                    self.set_ir_test(False)
+                    continue
 
             if viewers <= 0 and not ir_test:
                 with self.lock:
@@ -491,6 +506,10 @@ async def handle_stream(request):
     finally:
         with gateway.lock:
             gateway.active_viewers = max(0, gateway.active_viewers - 1)
+            remaining_viewers = gateway.active_viewers
+        if remaining_viewers == 0 and gateway.ir_test_active:
+            logger.info("🛡️ 视频流结束且已无在线观众，立即复位红外灯为 RGB 模式")
+            gateway.set_ir_test(False)
 
     return response
 

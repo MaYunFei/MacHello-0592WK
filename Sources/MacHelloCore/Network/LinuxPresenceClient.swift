@@ -277,16 +277,27 @@ public final class LinuxPresenceClient: NSObject, ObservableObject {
 
     /// 远程显式设置 Linux 摄像头的红外模式 (RGB / IR)
     public func setIRMode(isIR: Bool, completion: ((Bool) -> Void)? = nil) {
-        guard let url = URL(string: "\(serverURLString)/api/ir/set?ir=\(isIR ? 1 : 0)") else { return }
-        URLSession.shared.dataTask(with: url) { data, _, _ in
+        guard let url = URL(string: "\(serverURLString)/api/ir/set?ir=\(isIR ? 1 : 0)") else {
+            completion?(false)
+            return
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: req) { data, _, _ in
+            let irActive: Bool
             if let data = data,
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let irActive = json["ir_active"] as? Bool {
-                DispatchQueue.main.async {
-                    MacHelloService.shared.isIRActive = irActive
-                    completion?(irActive)
-                }
+               let val = json["ir_active"] as? Bool {
+                irActive = val
+            } else {
+                irActive = isIR
             }
+            DispatchQueue.main.async {
+                MacHelloService.shared.isIRActive = irActive
+            }
+            // 关键：在网络回调当前线程立即执行 completion，不能放在主线程队列中，
+            // 避免 CLI 工具（如终端 sudo 鉴权程序 machello-auth）主线程在阻塞等待信号量时死锁
+            completion?(irActive)
         }.resume()
     }
 
