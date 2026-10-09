@@ -174,6 +174,11 @@
    - 本项目必须同时提供两套 100% 物理级干净卸载方案：
      - **方案 A (菜单内置)**：状态栏菜单提供「🧹 彻底卸载 MacHello 并抹除所有数据...」，经严格二次确认后原子化注销开机自启、还原 PAM 提权配置、抹除全部 Keychain 密码、永久物理粉碎 `~/.machello/` 目录并退出；
      - **方案 B (独立脚本)**：提供独立终端清理脚本 `scripts/uninstall-all.sh`，一键全自动停止进程、恢复 PAM、清空钥匙串并清理应用包。
+16. **网络流生命周期并发安全与统一日志规范 (Network Stream Concurrency & Unified Logging Standards - CRITICAL)**：
+   - **`Data` 缓冲区多线程互斥访问**：`NetworkStreamReceiver` 接收局域网 MJPEG 视频流时，底层 `Data` 缓冲区必须由线程锁（`NSLock`）严格保护。严禁在主线程或定时器中跨线程无锁直接调用 `buffer.removeAll()`，杜绝与流解码线程竞争导致 `SIGTRAP` (Trace/BPT trap: 5) 越界崩溃；
+   - **严格防御性边界校验**：在切片提取 JPEG 帧（`removeSubrange`）前，必须做完整性边界校验（`start.lowerBound < end.upperBound && end.upperBound <= buffer.count`），若出现畸形帧或网络截断自动安全丢弃并清空缓冲区，严禁崩溃；
+   - **锁范围最小化与零死锁设计**：互斥锁仅包裹纯内存级 `Data` 切片与追加操作；耗时的 `CGImage` 解码、`CMSampleBuffer` 构建以及向 `owner.delegate` 的业务派发必须全部置于锁外执行，杜绝死锁与阻塞；
+   - **Apple 统一日志体系 (Apple Unified Logging · `os.Logger`)**：全面使用 `Logger(subsystem: "com.machello.app", category: "NetworkCamera")` 替代裸 `print`，记录网络流连接、正常关闭、主动取消与异常中断，支持通过 macOS 控制台应用（Console.app）实时追踪与诊断。
 
 ---
 

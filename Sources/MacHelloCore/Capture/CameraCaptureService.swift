@@ -5,6 +5,7 @@ import CoreImage
 import CoreGraphics
 import ImageIO
 import CIOKitHelper
+import os
 
 public protocol CameraCaptureDelegate: AnyObject {
     func cameraCaptureService(_ service: CameraCaptureService, didOutput sampleBuffer: CMSampleBuffer, isIR: Bool)
@@ -19,6 +20,7 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
     }
 
     private let session = AVCaptureSession()
+    private let logger = Logger(subsystem: "com.machello.app", category: "CameraCaptureService")
     private let outputQueue = DispatchQueue(label: "com.machello.camera.capture.queue")
     private var videoOutput: AVCaptureVideoDataOutput?
     fileprivate var currentMode: CaptureMode = .rgb
@@ -203,12 +205,18 @@ public final class CameraCaptureService: NSObject, AVCaptureVideoDataOutputSampl
 // MARK: - 局域网 MJPEG 视频流解码接收器 (Samba 模式数据源)
 
 final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
+    private let logger = Logger(subsystem: "com.machello.app", category: "NetworkCamera")
     private var task: URLSessionDataTask?
     private var session: URLSession?
     private var buffer = Data()
+    private let lock = NSLock()
     private let queue = DispatchQueue(label: "com.machello.network.camera.queue")
     private weak var owner: CameraCaptureService?
-    private(set) var isRunning: Bool = false
+    private var _isRunning: Bool = false
+
+    var isRunning: Bool {
+        lock.withLock { _isRunning }
+    }
 
     init(owner: CameraCaptureService) {
         self.owner = owner
@@ -217,30 +225,40 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
 
     func start(url: URL) {
         stop()
-        isRunning = true
+        lock.withLock {
+            _isRunning = true
+            buffer.removeAll()
+        }
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 10
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         task = session?.dataTask(with: url)
         task?.resume()
-        print("[NetworkCamera] 已连接局域网相机数据流: \(url)")
+        logger.info("[NetworkCamera] 已启动局域网相机数据流: \(url.absoluteString, privacy: .public)")
     }
 
     func stop() {
-        isRunning = false
+        lock.withLock {
+            _isRunning = false
+            buffer.removeAll()
+        }
         task?.cancel()
         task = nil
         session?.invalidateAndCancel()
         session = nil
-        buffer.removeAll()
+        logger.debug("[NetworkCamera] 已停止局域网相机数据流并安全重置缓冲区")
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error = error {
-            print("[NetworkCamera] 视频流连接断开/异常: \(error.localizedDescription)")
-            DispatchQueue.main.async { [weak self] in
-                self?.isRunning = false
+        if let error = error as NSError? {
+            if error.code == NSURLErrorCancelled {
+                logger.debug("[NetworkCamera] 视频流连接已正常关闭/主动取消")
+            } else {
+                logger.error("[NetworkCamera] 视频流连接断开/异常: \(error.localizedDescription, privacy: .public)")
             }
+        }
+        lock.withLock {
+            _isRunning = false
         }
     }
 
@@ -248,12 +266,41 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
         guard isRunning else { return }
         queue.async { [weak self] in
             guard let self = self, self.isRunning else { return }
-            self.buffer.append(data)
 
-            while let start = self.buffer.range(of: Data([0xFF, 0xD8])),
-                  let end = self.buffer.range(of: Data([0xFF, 0xD9]), in: start.lowerBound..<self.buffer.count) {
-                let jpegData = self.buffer.subdata(in: start.lowerBound..<end.upperBound)
-                self.buffer.removeSubrange(0..<end.upperBound)
+            // 1. 在互斥锁保护下快速追加数据并切割提取完整的 JPEG 图像数据片段
+            var rawFrames: [Data] = []
+            self.lock.withLock {
+                guard self._isRunning else {
+                    self.buffer.removeAll()
+                    return
+                }
+
+                self.buffer.append(data)
+
+                while let start = self.buffer.range(of: Data([0xFF, 0xD8])),
+                      let end = self.buffer.range(of: Data([0xFF, 0xD9]), in: start.lowerBound..<self.buffer.count) {
+                    // 严格边界防御：确保切割区间合法且不越界，彻底杜绝多线程或坏帧导致的 SIGTRAP 越界闪退
+                    guard start.lowerBound < end.upperBound, end.upperBound <= self.buffer.count else {
+                        self.logger.warning("[NetworkCamera] 异常的 MJPEG 数据区间: \(start.lowerBound)..<\(end.upperBound), 当前缓冲区: \(self.buffer.count)")
+                        self.buffer.removeAll()
+                        break
+                    }
+
+                    let jpegData = self.buffer.subdata(in: start.lowerBound..<end.upperBound)
+                    self.buffer.removeSubrange(0..<end.upperBound)
+                    rawFrames.append(jpegData)
+                }
+
+                // 缓冲区溢出保护 (2MB)
+                if self.buffer.count > 2 * 1024 * 1024 {
+                    self.logger.warning("[NetworkCamera] 缓冲区超过 2MB，清空以防内存泄露")
+                    self.buffer.removeAll()
+                }
+            }
+
+            // 2. 在锁外部进行图形解码与派发，彻底避免持有锁时执行耗时解码或引发死锁
+            for jpegData in rawFrames {
+                guard self.isRunning else { break }
 
                 guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil),
                       let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -265,11 +312,6 @@ final class NetworkStreamReceiver: NSObject, URLSessionDataDelegate {
                     let isFrameIR = (owner.currentMode == .ir) || (cgImage.width == 640 && cgImage.height == 480)
                     owner.delegate?.cameraCaptureService(owner, didOutput: sampleBuffer, isIR: isFrameIR)
                 }
-            }
-
-            // 缓冲区溢出保护
-            if self.buffer.count > 2 * 1024 * 1024 {
-                self.buffer.removeAll()
             }
         }
     }

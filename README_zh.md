@@ -47,6 +47,7 @@
     - **Mac 端作为唯一超级大脑**：通过局域网拉取视频流与单帧快照，在 Mac 内存中无缝转换为 `CVPixelBuffer`，直接喂入 **Apple Vision 框架与苹果 16 核神经网络引擎 (Apple Neural Engine, ANE / NPU)**，与本地 `~/.machello/faces.json` 进行 512 维特征比对；
     - **Mac 端 100% 复用所有核心功能**：面容录入向导、双目自检、通行历史抓拍与锁屏解锁完全复用同一套业务流水线；
     - **Mac 端 0 绿点与 0 隐私横幅**：由于图像走局域网内存管道流转，macOS 底层绝不创建相机隐私横幅，彻底告别 `MenuBarAgent` 卡顿，实现真正的无感体验！
+    - **高并发线程安全与 Apple 统一日志 (os.Logger)**：MJPEG 视频流解码管道全面升级互斥锁与严格区间边界防御（`NSLock` + 越界熔断），彻底根除跨线程启闭与切片时的竞态风险（0 闪退）；全面集成 Apple 原生 `os.Logger`，支持在「控制台 (Console.app)」实时监测网络流健康度与错误重连。
 - 🚶 **走开真锁屏 · 来人唤醒 (Human Presence Detection - HPD)**：
   - 毫秒级低功耗检测，用户离开座位达到指定时长，自动调用系统原生 `SACLockScreenImmediate()`（调用 macOS `login.framework` 原生接口）切入真正的锁屏保护状态，并同步休眠显示器；
   - **防泄密熔断铁律 (Zero Password Leakage)**：在模拟密码输入前严格进行多重锁屏/窗口原子状态检查，非锁屏状态坚决拒绝发送任何按键，100% 杜绝密码被误打入桌面应用；

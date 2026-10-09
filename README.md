@@ -49,6 +49,7 @@ This project has been extensively tested, tuned, and verified on real production
     - **Linux acts as a lightweight sensor gateway**: Runs no heavy biometric AI. Idles at **0.0% CPU**, automatically turning off camera LEDs when no client is streaming.
     - **Mac acts as the central brain**: Streams frames into `CVPixelBuffer` across the LAN, feeds directly into the **Apple Neural Engine (ANE/NPU)** to match 512-dimensional facial embeddings.
     - **Zero Green Privacy Dot on Mac**: Because images flow over LAN memory buffers, macOS never registers a local camera session, avoiding `MenuBarAgent` stuttering and privacy banners entirely!
+    - **Thread-Safe Streaming & Apple Unified Logging (`os.Logger`)**: Upgraded MJPEG stream parsing pipeline with strict mutual exclusion locks (`NSLock`), defensive boundary guards, and zero-deadlock guarantees to completely eliminate cross-thread race conditions. Integrated Apple native `os.Logger` for real-time observability in macOS Console.app.
 
 - 🚶 **True Human Presence Detection (HPD - Walk-Away Lock / Approach Wake)**:
   - Low-power continuous presence sensing. When you step away from your desk, calls macOS native `SACLockScreenImmediate()` to securely lock your Mac and sleep displays.
